@@ -66,6 +66,15 @@ Reglas clave:
   turnos ya asignados.
 - **Abastecedoras fuera de servicio**: el estado "fuera de servicio" solo restringe **el día en
   curso**. Para turnos futuros se puede planificar con un equipo que hoy está en taller.
+- **Horarios vencidos**: en el día en curso el cliente no puede reservar horas que ya pasaron
+  (si son las 14:00, los turnos de la mañana aparecen deshabilitados). El staff sí puede cargar
+  cualquier hora en un turno manual, para registrar algo que está ocurriendo.
+- **Cuenta corriente**: si la forma de pago es CUENTA CORRIENTE, el número de cuenta es
+  obligatorio y viaja en el turno, la agenda, el mail de confirmación y la API.
+- **Aviso por mail al asignar**: cuando el coordinador asigna abastecedora y chofer, los usuarios
+  del cliente reciben un correo con fecha/hora, matrícula, grado, equipo, operador y cuenta.
+- **Gestión de clientes** (coordinador y admin): renombrar, administrar sus usuarios (alta,
+  cambio de contraseña, activar/desactivar) y eliminar el cliente si no tiene movimientos.
 - **API de consulta** de solo lectura con app key para integrar BI/reportes — ver [API.md](API.md).
 - El **registro autogestionado permite un solo usuario por cliente**; los usuarios adicionales
   los agrega únicamente el coordinador (o el admin).

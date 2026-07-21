@@ -32,7 +32,7 @@ function wizardNuevo() {
   W = { paso: 1, fecha: null, hora: null, slots: [], capacidad: 2,
         matricula: '', aeronave: null, esNueva: false,
         nueva: { tipo: '', motor: '', grado: '', hangar: '', capacidad: '' },
-        volumen: '', formaPago: '', hangar: '', motivo: '' };
+        volumen: '', formaPago: '', cuenta: '', hangar: '', motivo: '' };
 }
 wizardNuevo();
 
@@ -418,16 +418,21 @@ async function pasoHora() {
   try { data = await api(`/api/turnos/slots?fecha=${W.fecha}&grado=${encodeURIComponent(grado)}`); }
   catch (e) { return `<div class="alerta roja">${esc(e.message)}</div>`; }
   W.capacidad = data.capacidad;
+  /* Si el horario elegido antes quedó vencido (pasó la hora), se limpia. */
+  if (W.hora && data.slots.some(s => s.hora === W.hora && s.lleno)) W.hora = null;
   const slots = data.slots.map(s => {
     const cls = s.lleno ? 'lleno' : (W.hora === s.hora ? 'elegido' : '');
     let sub;
-    if (s.lleno) sub = s.motivoLleno === 'recurso' ? `Sin ${grado === 'JET A-1' ? 'JET' : 'AVGAS'}` : 'Completo';
+    if (s.pasado) sub = 'Ya pasó';
+    else if (s.lleno) sub = s.motivoLleno === 'recurso' ? `Sin ${grado === 'JET A-1' ? 'JET' : 'AVGAS'}` : 'Completo';
     else sub = `${s.libres} libre${s.libres > 1 ? 's' : ''}`;
     return `<div class="slot ${cls}" ${s.lleno ? '' : `onclick="W.hora='${s.hora}';render()"`}>
       ${s.hora}<small>${sub}</small></div>`;
   }).join('');
+  const todosPasados = data.slots.length && data.slots.every(s => s.pasado);
   return `<h3 style="margin-bottom:4px">Elegí el horario:</h3>
     <p class="subtitulo">${fechaLegible(W.fecha)} · ${badgeGrado(grado)} · <strong>${data.recursoGrado}</strong> abastecedora(s) de este grado en la planta. Los horarios "Sin ${grado === 'JET A-1' ? 'JET' : 'AVGAS'}" no tienen equipo disponible aunque haya lugar en la grilla.</p>
+    ${data.ahora ? `<div class="alerta azul">🕐 Son las <strong>${data.ahora}</strong>: los horarios que ya pasaron aparecen deshabilitados.${todosPasados ? ' <strong>No quedan horarios disponibles hoy</strong>, elegí otra fecha.' : ''}</div>` : ''}
     <div class="grilla-slots">${slots}</div>
     <div class="botonera">
       <button class="btn btn-verde" ${W.hora ? '' : 'disabled'} onclick="wizardPaso(4)">Continuar</button>
@@ -601,6 +606,14 @@ async function pasoDatos() {
         <span class="icono-estado"></span>
       </div>
     </div>
+    ${W.formaPago === 'CUENTA CORRIENTE' ? `
+    <div class="fila-form">
+      <label>N° de cuenta corriente:<small>Obligatorio para facturar</small></label>
+      <div class="campo ${W.cuenta.trim() ? 'valido' : 'invalido'}">
+        <input type="text" value="${esc(W.cuenta)}" placeholder="Ej.: CC-10234" onchange="W.cuenta=this.value;render()">
+        <span class="icono-estado"></span>
+      </div>
+    </div>` : ''}
     <div class="fila-form">
       <label>Matrícula:</label>
       <div class="campo valido"><input type="text" value="${esc(a.matricula)}" disabled><span class="icono-estado"></span></div>
@@ -621,7 +634,7 @@ async function pasoDatos() {
       <div class="campo"><textarea onchange="W.motivo=this.value">${esc(W.motivo)}</textarea></div>
     </div>
     <div class="botonera">
-      <button class="btn btn-verde" ${vol > 0 && W.formaPago && W.hangar ? '' : 'disabled'} onclick="wizardPaso(5)">Continuar</button>
+      <button class="btn btn-verde" ${vol > 0 && W.formaPago && W.hangar && (W.formaPago !== 'CUENTA CORRIENTE' || W.cuenta.trim()) ? '' : 'disabled'} onclick="wizardPaso(5)">Continuar</button>
       <button class="btn btn-blanco" onclick="wizardPaso(3)">Cambiar horario</button>
     </div>`;
 }
@@ -636,7 +649,7 @@ function pasoConfirmacion() {
       <div class="fila"><div>Matrícula</div><div><strong>${esc(a.matricula)}</strong> — ${esc(a.tipo)}</div></div>
       <div class="fila"><div>Motor</div><div>${MOTORES[a.motor].nombre}</div></div>
       <div class="fila"><div>Volumen aproximado</div><div>${esc(W.volumen)} L</div></div>
-      <div class="fila"><div>Forma de pago</div><div>${esc(W.formaPago)}</div></div>
+      <div class="fila"><div>Forma de pago</div><div>${esc(W.formaPago)}${W.formaPago === 'CUENTA CORRIENTE' ? ` · Cuenta <strong>${esc(W.cuenta)}</strong>` : ''}</div></div>
       <div class="fila"><div>Cliente</div><div>${esc(USER.clienteNombre)}</div></div>
       <div class="fila"><div>Hangar / plataforma</div><div>${hangarSel ? `(${hangarSel.codigo}) ${esc(hangarSel.nombre)}` : esc(W.hangar)}</div></div>
       ${W.motivo ? `<div class="fila"><div>Motivo</div><div>${esc(W.motivo)}</div></div>` : ''}
@@ -678,8 +691,8 @@ async function confirmarTurno() {
   try {
     const r = await api('/api/turnos', 'POST', {
       fecha: W.fecha, hora: W.hora, matricula: W.aeronave.matricula,
-      volumen: W.volumen, forma_pago: W.formaPago, hangar: W.hangar, motivo: W.motivo,
-      confirmacion_matricula: escrito,
+      volumen: W.volumen, forma_pago: W.formaPago, cuenta_corriente: W.cuenta,
+      hangar: W.hangar, motivo: W.motivo, confirmacion_matricula: escrito,
     });
     wizardNuevo();
     VISTA = 'misturnos';
@@ -722,7 +735,7 @@ async function renderMisTurnos() {
         ${badgeEstado(t.estado)}
         <span style="margin-left:auto;color:var(--texto-suave);font-size:12px">${t.codigo}</span>
       </div>
-      <div class="datos">${t.volumen} L aprox. · ${esc(t.forma_pago)} · Hangar: ${esc(t.hangar)}${t.motivo ? ` · 📝 ${esc(t.motivo)}` : ''}</div>
+      <div class="datos">${t.volumen} L aprox. · ${esc(t.forma_pago)}${t.cuenta_corriente ? ` (cta. ${esc(t.cuenta_corriente)})` : ''} · Hangar: ${esc(t.hangar)}${t.motivo ? ` · 📝 ${esc(t.motivo)}` : ''}</div>
       ${detalleEstado}
       ${cancelable ? `<div class="acciones"><button class="btn btn-blanco btn-chico" onclick="abrirCancelar('${t.id}','${t.codigo}')">Cancelar turno</button></div>` : ''}
     </div>`;
@@ -811,7 +824,7 @@ async function renderAgenda() {
         ${badgeEstado(t.estado)}${tags(t)}
         <span style="margin-left:auto;color:var(--texto-suave);font-size:12px">${t.codigo}</span>
       </div>
-      <div class="datos">${t.volumen} L aprox. · ${esc(t.forma_pago)} · Cliente: ${esc(t.cliente)} · Hangar: ${esc(t.hangar)}${t.motivo ? `<br>📝 ${esc(t.motivo)}` : ''}</div>
+      <div class="datos">${t.volumen} L aprox. · ${esc(t.forma_pago)}${t.cuenta_corriente ? ` (cta. ${esc(t.cuenta_corriente)})` : ''} · Cliente: ${esc(t.cliente)} · Hangar: ${esc(t.hangar)}${t.motivo ? `<br>📝 ${esc(t.motivo)}` : ''}</div>
       <div class="acciones">
         <select id="ab-${t.id}" style="max-width:340px"><option value="">— Abastecedora (solo ${esc(t.grado)}) —</option>${ops}</select>
         <select id="op-${t.id}" style="max-width:220px"><option value="">— Operador —</option>${opOper}</select>
@@ -833,12 +846,16 @@ async function renderAgenda() {
     </div>
     <div class="datos">
       🚛 <strong>${esc(t.abastecedora)}</strong> · 👷 <strong>${esc(t.operador || '—')}</strong> ·
-      ${t.volumen} L · ${esc(t.cliente)} · Hangar: ${esc(t.hangar)}
+      ${t.volumen} L · ${esc(t.forma_pago)}${t.cuenta_corriente ? ` (cta. ${esc(t.cuenta_corriente)})` : ''} ·
+      ${esc(t.cliente)} · Hangar: ${esc(t.hangar)}
       ${t.comentario_coordinador ? `<br>💬 ${esc(t.comentario_coordinador)}` : ''}
     </div>
+    <div class="resultado-turno">
+      <span class="etiqueta">Resultado del turno:</span>
+      <button class="btn-resultado abastecido" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','ABASTECIDO')">✅ Abastecido</button>
+      <button class="btn-resultado ausente" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','AUSENTE')">🚫 No se presentó</button>
+    </div>
     <div class="acciones">
-      <button class="btn btn-verde btn-chico" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','ABASTECIDO')">✅ Abastecido</button>
-      <button class="btn btn-blanco btn-chico" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','AUSENTE')">🚫 No se presentó</button>
       <button class="btn btn-gris btn-chico" onclick="abrirReprogramar('${t.id}','${t.codigo}','${t.fecha}','${t.hora}','${t.grado}')">Cambiar horario</button>
       <button class="btn btn-gris btn-chico" onclick="abrirCancelar('${t.id}','${t.codigo}')">Cancelar</button>
     </div>
@@ -850,7 +867,7 @@ async function renderAgenda() {
       <strong>${esc(t.matricula)}</strong>${badgeEstado(t.estado)}${tags(t)}
       <span style="margin-left:auto;color:var(--texto-suave);font-size:12px">${t.codigo}</span>
     </div>
-    <div class="datos">🚛 ${esc(t.abastecedora || '—')} · ${t.volumen} L · ${esc(t.cliente)} · Hangar: ${esc(t.hangar)}
+    <div class="datos">🚛 ${esc(t.abastecedora || '—')} · ${t.volumen} L · ${esc(t.forma_pago)}${t.cuenta_corriente ? ` (cta. ${esc(t.cuenta_corriente)})` : ''} · ${esc(t.cliente)} · Hangar: ${esc(t.hangar)}
       ${t.comentario_coordinador ? `<br>💬 ${esc(t.comentario_coordinador)}` : ''}</div>
   </div>`;
 
@@ -906,7 +923,7 @@ async function abrirTurnoManual() {
   TM = {
     modo: 'buscar', clientes: [], aeronaves: [], hangares: [], slots: [],
     filtroCliente: '', busqueda: '', sel: null,
-    fecha: hoyISO(), hora: '', volumen: '', pago: FORMAS_PAGO[0], hangar: '', motivo: '', sobreturno: false,
+    fecha: hoyISO(), hora: '', volumen: '', pago: FORMAS_PAGO[0], cuenta: '', hangar: '', motivo: '', sobreturno: false,
     nueva: { matricula: '', tipo: '', motor: '', grado: '', capacidad: '', hangar: '', cliente_id: '' },
   };
   try {
@@ -1011,7 +1028,10 @@ function renderTurnoManual() {
     <div class="fila-form"><label>Volumen aprox. (L):</label>
       <div class="campo"><input type="number" min="1" value="${esc(TM.volumen)}" onchange="TM.volumen=this.value"></div></div>
     <div class="fila-form"><label>Forma de pago:</label>
-      <div class="campo"><select onchange="TM.pago=this.value">${optPago}</select></div></div>
+      <div class="campo"><select onchange="TM.pago=this.value;renderTurnoManual()">${optPago}</select></div></div>
+    ${TM.pago === 'CUENTA CORRIENTE' ? `
+    <div class="fila-form"><label>N° de cuenta corriente:<small>Obligatorio</small></label>
+      <div class="campo"><input type="text" value="${esc(TM.cuenta)}" placeholder="Ej.: CC-10234" onchange="TM.cuenta=this.value"></div></div>` : ''}
     <div class="fila-form"><label>Hangar / plataforma:</label>
       <div class="campo"><select onchange="TM.hangar=this.value"><option value="">—</option>${optHan}</select></div></div>
     <div class="fila-form"><label>Motivo / nota:</label>
@@ -1115,8 +1135,8 @@ async function crearTurnoManual() {
   try {
     const r = await api('/api/turnos', 'POST', {
       matricula: TM.sel.matricula, fecha: TM.fecha, hora: TM.hora,
-      volumen: TM.volumen, forma_pago: TM.pago, hangar: TM.hangar,
-      motivo: TM.motivo, sobreturno: TM.sobreturno,
+      volumen: TM.volumen, forma_pago: TM.pago, cuenta_corriente: TM.cuenta,
+      hangar: TM.hangar, motivo: TM.motivo, sobreturno: TM.sobreturno,
     });
     cerrarModal(); render();
     alertaModal('Turno creado', `${r.codigo} creado${r.sobreturno ? ' como SOBRETURNO' : ''} para ${TM.sel.matricula} el ${TM.fecha} a las ${TM.hora}. Aparece en pendientes para asignarle abastecedora y operador.`);
@@ -1304,23 +1324,146 @@ async function renderClientes() {
       <td>${c.aeronaves}</td>
       <td>${c.activo ? '✅ Activo' : '⛔ Inactivo'}</td>
       <td style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-verde btn-chico" onclick="abrirNuevoUsuarioCliente('${c.id}','${esc(c.nombre)}')">+ Usuario</button>
-        ${USER.rol === 'admin' ? `<button class="btn btn-gris btn-chico" onclick="toggleCliente('${c.id}',${c.activo ? 0 : 1})">${c.activo ? 'Desactivar' : 'Reactivar'}</button>` : ''}
+        <button class="btn btn-verde btn-chico" onclick="abrirGestionCliente('${c.id}')">Gestionar</button>
+        <button class="btn btn-gris btn-chico" onclick="toggleCliente('${c.id}',${c.activo ? 0 : 1})">${c.activo ? 'Desactivar' : 'Reactivar'}</button>
       </td>
     </tr>`).join('');
   $('#main').innerHTML = `
     <h2 class="titulo-seccion">Clientes</h2>
-    <p class="subtitulo">El registro autogestionado crea un solo usuario por cliente; los usuarios adicionales se agregan desde acá.</p>
+    <p class="subtitulo">Desde "Gestionar" podés renombrar el cliente, administrar sus usuarios (alta, contraseña, activar/desactivar) y eliminarlo. El registro autogestionado crea un solo usuario por cliente: los adicionales se agregan acá.</p>
     <div class="panel">
       <div class="tabla-scroll"><table>
         <thead><tr><th>Cliente</th><th>Usuarios</th><th>Aeronaves</th><th>Estado</th><th></th></tr></thead>
         <tbody>${filas}</tbody>
       </table></div>
-      ${USER.rol === 'admin' ? `<div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
         <input type="text" id="nc-nombre" placeholder="Nombre del nuevo cliente" style="max-width:320px">
         <button class="btn btn-verde btn-chico" onclick="altaCliente()">+ Crear cliente</button>
-      </div>` : ''}
+      </div>
     </div>`;
+}
+
+/* ---------- Ficha de gestión de un cliente ---------- */
+
+let CLI = null;
+
+async function abrirGestionCliente(id) {
+  try {
+    const clientes = await api('/api/clientes');
+    CLI = clientes.find(c => c.id === id);
+    if (!CLI) return alertaModal('Cliente inexistente', 'No se encontró el cliente.');
+    CLI.usuariosLista = await api(`/api/clientes/${id}/usuarios`);
+  } catch (e) { return errorModal(e); }
+  renderGestionCliente();
+}
+
+function renderGestionCliente() {
+  const c = CLI;
+  const usuarios = c.usuariosLista.length ? c.usuariosLista.map(u => `
+    <tr${u.activo ? '' : ' style="opacity:.55"'}>
+      <td>${esc(u.nombre)}</td>
+      <td style="font-size:12.5px">${esc(u.email)}</td>
+      <td>${u.activo ? '✅' : '⛔'}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-gris btn-chico" onclick="renombrarUsuarioCliente('${u.id}','${esc(u.nombre)}')">Renombrar</button>
+        <button class="btn btn-gris btn-chico" onclick="passwordUsuarioCliente('${u.id}','${esc(u.email)}')">Contraseña</button>
+        <button class="btn btn-gris btn-chico" onclick="toggleUsuarioCliente('${u.id}',${u.activo ? 0 : 1})">${u.activo ? 'Desactivar' : 'Reactivar'}</button>
+      </td>
+    </tr>`).join('')
+    : `<tr><td colspan="4" style="color:var(--texto-suave)">Este cliente no tiene usuarios.</td></tr>`;
+
+  modal(`<h3>🏢 ${esc(c.nombre)}</h3>
+    <div class="fila-form"><label>Nombre del cliente:</label>
+      <div class="campo" style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="gc-nombre" value="${esc(c.nombre)}" style="max-width:260px">
+        <button class="btn btn-gris btn-chico" onclick="guardarNombreCliente()">Guardar</button>
+      </div></div>
+    <p class="subtitulo" style="margin:6px 0 0">${c.aeronaves} aeronave(s) · ${c.usuarios} usuario(s) · ${c.activo ? 'Activo' : 'Inactivo'}${c.autogestionado ? ' · registrado por autogestión' : ''}</p>
+
+    <h4 style="font-size:14px;margin:18px 0 8px">Usuarios del cliente</h4>
+    <div class="tabla-scroll"><table>
+      <thead><tr><th>Nombre</th><th>Email</th><th>Activo</th><th></th></tr></thead>
+      <tbody>${usuarios}</tbody></table></div>
+    <div style="margin-top:12px">
+      <button class="btn btn-verde btn-chico" onclick="abrirNuevoUsuarioCliente('${c.id}','${esc(c.nombre)}')">+ Agregar usuario</button>
+    </div>
+
+    <div class="alerta roja" style="margin-top:20px">
+      <strong>Eliminar cliente.</strong> Solo se puede si no tiene aeronaves ni turnos en el histórico; en ese caso se borran también sus usuarios. Si tiene movimientos, desactivalo en vez de borrarlo.
+      <div style="margin-top:8px"><button class="btn btn-blanco btn-chico" onclick="borrarCliente('${c.id}','${esc(c.nombre)}')">Eliminar cliente</button></div>
+    </div>
+
+    <div class="botonera"><button class="btn btn-gris" onclick="cerrarModal();render()">Cerrar</button></div>`);
+}
+
+async function recargarGestionCliente() {
+  const clientes = await api('/api/clientes');
+  const actualizado = clientes.find(c => c.id === CLI.id);
+  if (!actualizado) { cerrarModal(); return render(); }
+  CLI = actualizado;
+  CLI.usuariosLista = await api(`/api/clientes/${CLI.id}/usuarios`);
+  renderGestionCliente();
+}
+
+async function guardarNombreCliente() {
+  const nombre = $('#gc-nombre').value.trim();
+  if (!nombre) return alertaModal('Falta el nombre', 'El cliente necesita un nombre.');
+  try { await api(`/api/clientes/${CLI.id}`, 'PUT', { nombre }); await recargarGestionCliente(); }
+  catch (e) { errorModal(e); }
+}
+
+function renombrarUsuarioCliente(usuarioId, actual) {
+  modal(`<h3>Renombrar usuario</h3>
+    <div class="fila-form"><label>Nombre:</label>
+      <div class="campo"><input type="text" id="ru-nombre" value="${esc(actual)}"></div></div>
+    <div class="botonera">
+      <button class="btn btn-verde" onclick="enviarRenombrarUsuarioCliente('${usuarioId}')">Guardar</button>
+      <button class="btn btn-gris" onclick="renderGestionCliente()">Cancelar</button>
+    </div>`);
+}
+
+async function enviarRenombrarUsuarioCliente(usuarioId) {
+  try {
+    await api(`/api/clientes/${CLI.id}/usuarios/${usuarioId}`, 'PUT', { nombre: $('#ru-nombre').value });
+    await recargarGestionCliente();
+  } catch (e) { errorModal(e); }
+}
+
+function passwordUsuarioCliente(usuarioId, email) {
+  modal(`<h3>Nueva contraseña para ${esc(email)}</h3>
+    <div class="fila-form"><label>Contraseña:<small>Mínimo 8 caracteres</small></label>
+      <div class="campo"><input type="password" id="pu-pass"></div></div>
+    <div class="botonera">
+      <button class="btn btn-verde" onclick="enviarPasswordUsuarioCliente('${usuarioId}')">Guardar</button>
+      <button class="btn btn-gris" onclick="renderGestionCliente()">Cancelar</button>
+    </div>`);
+}
+
+async function enviarPasswordUsuarioCliente(usuarioId) {
+  try {
+    const r = await api(`/api/clientes/${CLI.id}/usuarios/${usuarioId}`, 'PUT', { password: $('#pu-pass').value });
+    await recargarGestionCliente();
+    alertaModal('Contraseña actualizada', r.mail_enviado
+      ? 'Se le avisó por mail con la nueva contraseña.'
+      : 'El envío de mails no está configurado: pasale la contraseña por otro medio.');
+  } catch (e) { errorModal(e); }
+}
+
+async function toggleUsuarioCliente(usuarioId, activo) {
+  try {
+    await api(`/api/clientes/${CLI.id}/usuarios/${usuarioId}`, 'PUT', { activo: !!activo });
+    await recargarGestionCliente();
+  } catch (e) { errorModal(e); }
+}
+
+function borrarCliente(id, nombre) {
+  confirmarModal('Eliminar cliente', `¿Eliminar definitivamente "${nombre}" y sus usuarios?`, async () => {
+    try {
+      const r = await api(`/api/clientes/${id}`, 'DELETE');
+      cerrarModal(); render();
+      alertaModal('Cliente eliminado', `Se eliminó "${nombre}"${r.usuarios_eliminados ? ` y ${r.usuarios_eliminados} usuario(s) asociado(s)` : ''}.`);
+    } catch (e) { errorModal(e); }
+  });
 }
 
 function abrirNuevoUsuarioCliente(clienteId, nombreCliente) {
@@ -1340,10 +1483,11 @@ async function enviarNuevoUsuarioCliente(clienteId) {
     const r = await api(`/api/clientes/${clienteId}/usuarios`, 'POST', {
       nombre: $('#nu-nombre').value, email: $('#nu-email').value, password: $('#nu-pass').value,
     });
-    cerrarModal(); render();
-    alertaModal('Usuario creado', r.mail_enviado
+    const aviso = r.mail_enviado
       ? 'Se le envió un mail de bienvenida con sus credenciales de acceso.'
-      : 'El envío de mails no está configurado: pasale el email y la contraseña por otro medio.');
+      : 'El envío de mails no está configurado: pasale el email y la contraseña por otro medio.';
+    if (CLI && CLI.id === clienteId) { await recargarGestionCliente(); alertaModal('Usuario creado', aviso); }
+    else { cerrarModal(); render(); alertaModal('Usuario creado', aviso); }
   } catch (e) { errorModal(e); }
 }
 

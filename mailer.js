@@ -93,4 +93,31 @@ function mailPasswordRestablecida(nombre, email, passwordNueva, appUrl) {
      <p style="margin-top:14px"><a href="${appUrl}" style="background:#0451DD;color:#fff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:700">Ingresar</a></p>`);
 }
 
-module.exports = { enviarMail, mailConfigurado, mailBienvenida, mailRecuperacion, mailPasswordRestablecida };
+/* Aviso al cliente cuando la planta asigna abastecedora y chofer. */
+function mailTurnoAsignado(t, abastecedora, operador, appUrl) {
+  const colorGrado = t.grado === 'JET A-1' ? '#111111' : '#C81E1E';
+  const fila = (k, v) => `<tr><td style="padding:5px 14px 5px 0;color:#6b7280;white-space:nowrap">${k}</td><td><strong>${v}</strong></td></tr>`;
+  return plantilla(`Turno ${t.codigo} confirmado`,
+    `<p>Tu turno de abastecimiento quedó <strong>programado</strong>. Estos son los datos asignados por la planta:</p>
+     <div style="background:${colorGrado};color:#fff;text-align:center;padding:14px;margin:14px 0;border-radius:2px">
+       <div style="font-size:22px;font-weight:800;letter-spacing:1px">⛽ ${t.grado}</div>
+       <div style="font-size:12px;opacity:.85">Código de color internacional: ${t.grado === 'JET A-1' ? 'NEGRO' : 'ROJO'}</div>
+     </div>
+     <table style="border-collapse:collapse;font-size:14px">
+       ${fila('Fecha y hora:', `${t.fecha} · ${t.hora} hs`)}
+       ${fila('Aeronave:', `${t.matricula} — ${t.tipo_aeronave}`)}
+       ${fila('Abastecedora:', abastecedora)}
+       ${fila('Chofer / operador:', operador)}
+       ${fila('Volumen estimado:', `${t.volumen} L`)}
+       ${fila('Hangar / posición:', t.hangar)}
+       ${t.cuenta_corriente ? fila('Cuenta corriente:', t.cuenta_corriente) : ''}
+     </table>
+     ${t.comentario_coordinador ? `<p style="margin-top:14px">💬 <em>${t.comentario_coordinador}</em></p>` : ''}
+     <p style="margin-top:18px"><a href="${appUrl}" style="background:#0451DD;color:#fff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:700">Ver mis turnos</a></p>
+     <p style="color:#6b7280;font-size:12.5px;margin-top:14px">Verificá que el grado indicado coincida con el de tu aeronave antes de la carga.</p>`);
+}
+
+module.exports = {
+  enviarMail, mailConfigurado, mailBienvenida, mailRecuperacion,
+  mailPasswordRestablecida, mailTurnoAsignado,
+};

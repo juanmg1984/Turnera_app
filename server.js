@@ -13,7 +13,8 @@ const {
   setCookieSesion, limpiarCookieSesion, cargarUsuario, requiere,
 } = require('./auth');
 const {
-  enviarMail, mailConfigurado, mailBienvenida, mailRecuperacion, mailPasswordRestablecida,
+  enviarMail, mailConfigurado, mailBienvenida, mailRecuperacion,
+  mailPasswordRestablecida, mailTurnoAsignado,
 } = require('./mailer');
 const { randomBytes } = require('node:crypto');
 const {
@@ -97,6 +98,14 @@ function hoyBuenosAires() {
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
   return p; // YYYY-MM-DD
+}
+
+/* Hora actual en Buenos Aires, formato HH:MM (24 h) */
+function horaBuenosAires() {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date());
 }
 
 function levenshtein(a, b) {
@@ -443,6 +452,67 @@ app.put('/api/clientes/:id', requiere('admin', 'coordinador'), async (req, res, 
   } catch (e) { next(e); }
 });
 
+/* Eliminar cliente: solo si no tiene aeronaves ni turnos (si no, se desactiva). */
+app.delete('/api/clientes/:id', requiere('admin', 'coordinador'), async (req, res, next) => {
+  try {
+    const cli = (await query(`SELECT * FROM clientes WHERE id = ?`, [req.params.id]))[0];
+    if (!cli) return errj(res, 404, 'Cliente inexistente.');
+    const aeronaves = Number((await query(
+      `SELECT COUNT(*) AS n FROM aeronaves WHERE cliente_id = ?`, [cli.id]))[0].n);
+    const turnos = Number((await query(
+      `SELECT COUNT(*) AS n FROM turnos WHERE cliente_id = ?`, [cli.id]))[0].n);
+    if (aeronaves || turnos) {
+      return errj(res, 409,
+        `No se puede eliminar "${cli.nombre}": tiene ${aeronaves} aeronave(s) y ${turnos} turno(s) en el histórico. Desactivalo para que deje de operar sin perder los datos.`);
+    }
+    const usuarios = await query(`SELECT id FROM usuarios WHERE cliente_id = ?`, [cli.id]);
+    for (const u of usuarios) {
+      await query(`DELETE FROM sesiones WHERE usuario_id = ?`, [u.id]);
+      await query(`DELETE FROM usuarios WHERE id = ?`, [u.id]);
+    }
+    await query(`DELETE FROM notificaciones WHERE cliente_id = ?`, [cli.id]);
+    await query(`DELETE FROM clientes WHERE id = ?`, [cli.id]);
+    res.json({ ok: true, usuarios_eliminados: usuarios.length });
+  } catch (e) { next(e); }
+});
+
+/* Usuarios de un cliente (para que el coordinador los administre) */
+app.get('/api/clientes/:id/usuarios', requiere('admin', 'coordinador'), async (req, res, next) => {
+  try {
+    res.json(await query(
+      `SELECT id, nombre, email, activo, creado FROM usuarios
+        WHERE cliente_id = ? AND rol = 'cliente' ORDER BY nombre`, [req.params.id]));
+  } catch (e) { next(e); }
+});
+
+/* Editar un usuario de un cliente. El coordinador solo toca usuarios con rol
+   cliente que pertenezcan a ese cliente: nunca admins ni coordinadores. */
+app.put('/api/clientes/:id/usuarios/:usuarioId', requiere('admin', 'coordinador'), async (req, res, next) => {
+  try {
+    const u = (await query(
+      `SELECT * FROM usuarios WHERE id = ? AND cliente_id = ? AND rol = 'cliente'`,
+      [req.params.usuarioId, req.params.id]))[0];
+    if (!u) return errj(res, 404, 'Usuario inexistente para ese cliente.');
+    const { nombre, activo, password } = req.body || {};
+    if (nombre !== undefined && String(nombre).trim()) {
+      await query(`UPDATE usuarios SET nombre = ? WHERE id = ?`, [String(nombre).trim(), u.id]);
+    }
+    if (activo !== undefined) {
+      await query(`UPDATE usuarios SET activo = ? WHERE id = ?`, [activo ? 1 : 0, u.id]);
+      if (!activo) await query(`DELETE FROM sesiones WHERE usuario_id = ?`, [u.id]);
+    }
+    let mailEnviado;
+    if (password !== undefined) {
+      if (String(password).length < 8) return errj(res, 400, 'La contraseña debe tener al menos 8 caracteres.');
+      await query(`UPDATE usuarios SET hash = ? WHERE id = ?`, [hashPassword(password), u.id]);
+      const m = await enviarMail(u.email, 'Tu contraseña fue restablecida — Turnos Aeroplanta San Fernando',
+        mailPasswordRestablecida(u.nombre, u.email, String(password), APP_URL));
+      mailEnviado = m.enviado;
+    }
+    res.json({ ok: true, mail_enviado: mailEnviado });
+  } catch (e) { next(e); }
+});
+
 /* Usuarios adicionales de un cliente: SOLO coordinador (y admin) */
 app.post('/api/clientes/:id/usuarios', requiere('coordinador', 'admin'), async (req, res, next) => {
   try {
@@ -737,19 +807,25 @@ app.get('/api/turnos/slots', requiere(), async (req, res, next) => {
       mapaGrado = Object.fromEntries(og.map(o => [o.hora, Number(o.n)]));
     }
 
+    /* Si la fecha es hoy, los horarios que ya pasaron no se pueden pedir. */
+    const ahora = fecha === hoyBuenosAires() ? horaBuenosAires() : null;
+
     res.json({
-      capacidad, grado, recursoGrado,
+      capacidad, grado, recursoGrado, ahora,
       slots: slots.map(h => {
         const gen = mapaGen[h] || 0;
         const gg = mapaGrado[h] || 0;
         const librePorCapacidad = capacidad - gen;
         const librePorRecurso = recursoGrado === null ? librePorCapacidad : recursoGrado - gg;
         const libres = Math.max(0, Math.min(librePorCapacidad, librePorRecurso));
+        const pasado = !!ahora && h <= ahora;
         return {
-          hora: h, ocupados: gen, libres,
-          lleno: libres <= 0,
-          motivoLleno: libres > 0 ? null
-            : (librePorRecurso <= 0 && librePorCapacidad > 0 ? 'recurso' : 'capacidad'),
+          hora: h, ocupados: gen, libres: pasado ? 0 : libres,
+          pasado,
+          lleno: pasado || libres <= 0,
+          motivoLleno: pasado ? 'pasado'
+            : (libres > 0 ? null
+              : (librePorRecurso <= 0 && librePorCapacidad > 0 ? 'recurso' : 'capacidad')),
         };
       }),
     });
@@ -798,8 +874,13 @@ async function validarSlot(fecha, hora, ignorarTurnoId, opts = {}) {
   /* El staff puede fijar cualquier horario (fuera de la grilla) en turnos manuales. */
   if (horarioLibre) {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora || '')) return 'Horario inválido (formato HH:MM).';
-  } else if (!slots.includes(hora)) {
-    return 'El horario no corresponde a la grilla de turnos vigente.';
+  } else {
+    if (!slots.includes(hora)) return 'El horario no corresponde a la grilla de turnos vigente.';
+    /* Horarios ya vencidos del día en curso: no se pueden reservar.
+       (El staff sí puede, con horario libre, para registrar algo que está pasando.) */
+    if (fecha === hoyBuenosAires() && hora <= horaBuenosAires()) {
+      return `Ese horario ya pasó (son las ${horaBuenosAires()}). Elegí uno posterior u otra fecha.`;
+    }
   }
   if (!saltearLimiteDias) {
     const limite = new Date(Date.now() + dias * 86400e3).toISOString().slice(0, 10);
@@ -849,6 +930,11 @@ app.post('/api/turnos', requiere(), async (req, res, next) => {
     if (errSlot) return errj(res, 400, errSlot);
     if (!(Number(b.volumen) > 0)) return errj(res, 400, 'Ingresá el volumen aproximado en litros.');
     if (!FORMAS_PAGO.includes(b.forma_pago)) return errj(res, 400, 'Seleccioná la forma de pago.');
+    /* Cuenta corriente: el número de cuenta es obligatorio para poder facturar. */
+    const cuenta = String(b.cuenta_corriente || '').trim();
+    if (b.forma_pago === 'CUENTA CORRIENTE' && !cuenta) {
+      return errj(res, 400, 'Ingresá el número de cuenta corriente.');
+    }
     const hangar = (await query(`SELECT codigo FROM hangares WHERE codigo = ? AND activo = 1`, [b.hangar]))[0];
     if (!hangar) return errj(res, 400, 'Seleccioná el hangar / plataforma.');
 
@@ -863,9 +949,10 @@ app.post('/api/turnos', requiere(), async (req, res, next) => {
     const codigo = `T-${String(Number(cnt[0].n) + 1).padStart(4, '0')}`;
     await query(
       `INSERT INTO turnos (id, codigo, fecha, hora, matricula, tipo_aeronave, grado, volumen, forma_pago,
-                           hangar, motivo, estado, sobreturno, origen, cliente_id, creado_por, creado)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?, ?, ?)`,
+                           cuenta_corriente, hangar, motivo, estado, sobreturno, origen, cliente_id, creado_por, creado)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?, ?, ?)`,
       [uuid(), codigo, b.fecha, b.hora, matricula, a.tipo, a.grado, Number(b.volumen), b.forma_pago,
+       b.forma_pago === 'CUENTA CORRIENTE' ? cuenta : '',
        b.hangar, String(b.motivo || '').trim(), esSobreturno ? 1 : 0, esStaff ? 'MANUAL' : 'CLIENTE',
        a.cliente_id, req.usuario.id, new Date().toISOString()]);
     res.json({ ok: true, codigo, grado: a.grado, sobreturno: esSobreturno });
@@ -907,7 +994,18 @@ app.put('/api/turnos/:id/asignar', requiere('coordinador', 'admin'), async (req,
       [ab.id, op.id, t.id]);
     await notificar(t.cliente_id, t.codigo,
       `✅ Tu turno ${t.codigo} fue programado: ${t.fecha} ${t.hora} hs, ${t.matricula} (${t.grado}), abastecedora ${ab.id}, operador ${op.nombre}.`);
-    res.json({ ok: true });
+
+    /* Aviso por mail a los usuarios del cliente (además de la notificación en la app). */
+    const destinatarios = await query(
+      `SELECT email FROM usuarios WHERE cliente_id = ? AND activo = 1`, [t.cliente_id]);
+    let mailEnviado = false;
+    for (const d of destinatarios) {
+      const r = await enviarMail(d.email,
+        `Turno ${t.codigo} confirmado — ${t.matricula} el ${t.fecha} ${t.hora} hs`,
+        mailTurnoAsignado(t, ab.id, op.nombre, APP_URL));
+      mailEnviado = mailEnviado || r.enviado;
+    }
+    res.json({ ok: true, mail_enviado: mailEnviado, destinatarios: destinatarios.length });
   } catch (e) { next(e); }
 });
 
@@ -1104,7 +1202,7 @@ v1.get('/turnos', async (req, res, next) => {
     const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
     const filas = await query(
       `SELECT t.codigo, t.fecha, t.hora, t.matricula, t.tipo_aeronave, t.grado, t.volumen,
-              t.forma_pago, t.hangar, t.estado, t.abastecedora, o.nombre AS operador,
+              t.forma_pago, t.cuenta_corriente, t.hangar, t.estado, t.abastecedora, o.nombre AS operador,
               t.sobreturno, t.origen, t.motivo, t.comentario_coordinador, t.motivo_cancelacion,
               c.nombre AS cliente, t.creado
          FROM turnos t

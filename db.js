@@ -50,6 +50,7 @@ const TURNOS_DDL = `CREATE TABLE IF NOT EXISTS turnos (
      abastecedora TEXT, operador_id TEXT,
      sobreturno INTEGER NOT NULL DEFAULT 0,
      origen TEXT NOT NULL DEFAULT 'CLIENTE',
+     cuenta_corriente TEXT DEFAULT '',
      comentario_coordinador TEXT DEFAULT '',
      motivo_cancelacion TEXT DEFAULT '',
      cliente_id TEXT NOT NULL, creado_por TEXT NOT NULL, creado TEXT NOT NULL)`;
@@ -203,9 +204,19 @@ async function migrar() {
   console.log('Migración aplicada: tabla turnos actualizada (sobreturno, origen, nuevos estados).');
 }
 
+/* Agrega una columna si todavía no existe (migraciones incrementales simples). */
+async function asegurarColumna(tabla, columna, definicion) {
+  const cols = await query(`PRAGMA table_info(${tabla})`);
+  if (!cols.some(c => c.name === columna)) {
+    await query(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${definicion}`);
+    console.log(`Migración aplicada: ${tabla}.${columna}`);
+  }
+}
+
 async function init(hashPassword) {
   for (const sql of SCHEMA) await query(sql);
   await migrar();
+  await asegurarColumna('turnos', 'cuenta_corriente', `TEXT DEFAULT ''`);
   await seed(hashPassword);
 }
 
