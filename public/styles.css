@@ -1,0 +1,291 @@
+/* ============================================================
+   Turnera Aeroplanta San Fernando — estilo corporativo YPF
+   Paleta y estética tomadas de negocios.ypf.com/aviacion.html:
+   azul #0451DD, tipografía tipo DIN (Barlow), diseño plano,
+   esquinas casi rectas (2-4px), header blanco.
+   Los colores de grado (JET A-1 negro / AVGAS rojo) son de
+   SEGURIDAD (código internacional) y no siguen la marca.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;0,700;0,800;1,700;1,800&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --azul: #0451DD;            /* azul YPF */
+  --azul-oscuro: #0341B0;
+  --azul-suave: #E8EFFC;
+  --verde: #0451DD;           /* alias histórico: el "verde" de la v1 ahora es el azul de marca */
+  --verde-oscuro: #0341B0;
+  --exito: #1a7f37;
+  --rojo: #D32F2F;
+  --gris-borde: #E0E0E0;
+  --gris-fondo: #FAFAFA;
+  --texto: #212121;
+  --texto-suave: #616161;
+  --gris-nav: #838383;
+  --jet: #111111;
+  --avgas: #C81E1E;
+}
+
+body {
+  font-family: 'Barlow', 'DIN', 'Segoe UI', system-ui, sans-serif;
+  color: var(--texto);
+  background: var(--gris-fondo);
+  min-height: 100vh;
+}
+
+/* ---------- Header (blanco, 80px, estilo YPF) ---------- */
+header {
+  background: #ffffff;
+  border-bottom: 1px solid var(--gris-borde);
+  padding: 0 32px;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+header .logo { display: flex; align-items: center; gap: 14px; padding: 12px 0; }
+header .logo .iso {
+  width: 46px; height: 46px; border-radius: 2px;
+  background: var(--azul); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-style: italic; font-size: 17px; letter-spacing: -0.5px;
+}
+header .logo h1 { font-size: 19px; font-weight: 700; letter-spacing: -0.2px; }
+header .logo small { display: block; font-size: 12px; color: var(--gris-nav); font-weight: 400; letter-spacing: 0; }
+
+nav { display: flex; gap: 2px; margin-left: auto; flex-wrap: wrap; align-items: center; }
+nav button {
+  border: none; background: transparent; color: var(--gris-nav);
+  padding: 10px 16px; border-radius: 0; font-size: 14.5px; font-weight: 600;
+  cursor: pointer; transition: color .15s;
+  border-bottom: 3px solid transparent;
+  font-family: inherit;
+}
+nav button:hover { color: var(--azul); }
+nav button.activo { color: var(--azul); border-bottom-color: var(--azul); }
+nav button .badge-num {
+  background: var(--rojo); color: #fff; border-radius: 2px;
+  font-size: 11px; padding: 1px 7px; margin-left: 6px;
+}
+
+main { max-width: 1080px; margin: 30px auto 80px; padding: 0 20px; }
+
+h2.titulo-seccion { font-size: 24px; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.3px; }
+h2.titulo-seccion::after {
+  content: ''; display: block; width: 56px; height: 3px;
+  background: var(--azul); margin-top: 8px;
+}
+p.subtitulo { color: var(--texto-suave); font-size: 14px; margin: 12px 0 20px; }
+
+/* ---------- Paneles ---------- */
+.panel {
+  background: #fff; border: 1px solid var(--gris-borde);
+  border-radius: 2px; padding: 26px; margin-bottom: 18px;
+}
+
+/* ---------- Wizard ---------- */
+.pasos { display: flex; gap: 0; margin-bottom: 24px; }
+.paso-chip {
+  flex: 1; text-align: center; font-size: 12.5px; font-weight: 700;
+  color: var(--gris-nav); padding: 10px 4px;
+  border-bottom: 3px solid var(--gris-borde);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.paso-chip.actual { color: var(--azul); border-color: var(--azul); }
+.paso-chip.hecho { color: var(--azul-oscuro); border-color: var(--azul-oscuro); }
+
+/* ---------- Formularios ---------- */
+.fila-form {
+  display: grid; grid-template-columns: 280px 1fr;
+  gap: 14px; align-items: start; margin-bottom: 14px;
+}
+.fila-form label { font-size: 14.5px; padding-top: 10px; font-weight: 600; }
+.fila-form label small { display: block; color: var(--texto-suave); font-size: 12px; font-weight: 400; }
+
+input[type=text], input[type=number], input[type=date], input[type=password], select, textarea {
+  width: 100%; padding: 11px 12px; font-size: 14.5px;
+  border: 1px solid #BDBDBD; border-radius: 2px;
+  background: #fff; color: var(--texto); outline: none;
+  transition: border-color .15s, box-shadow .15s;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--azul); box-shadow: 0 0 0 2px rgba(4, 81, 221, .15);
+}
+textarea { min-height: 90px; resize: vertical; }
+
+.campo { position: relative; }
+.campo.invalido input, .campo.invalido select, .campo.invalido textarea { border-color: var(--rojo); }
+.campo.valido input, .campo.valido select, .campo.valido textarea { border-color: var(--azul); }
+.campo .icono-estado {
+  position: absolute; right: 12px; top: 10px; font-size: 16px; pointer-events: none;
+}
+.campo.invalido .icono-estado::after { content: '⚠'; color: var(--rojo); }
+.campo.valido .icono-estado::after { content: '✔'; color: var(--azul); }
+.msg-error { color: var(--rojo); font-size: 12.5px; margin-top: 4px; }
+
+/* ---------- Botones (cuadrados, estilo YPF) ---------- */
+.botonera { display: flex; flex-direction: column; gap: 10px; align-items: center; margin-top: 22px; }
+.btn {
+  display: inline-block; padding: 12px 24px; min-width: 320px; text-align: center;
+  border-radius: 2px; font-size: 14.5px; font-weight: 700; cursor: pointer;
+  border: 1px solid transparent; transition: background .15s, color .15s, border-color .15s;
+  font-family: inherit; letter-spacing: .2px;
+}
+.btn-verde { background: var(--azul); color: #fff; }
+.btn-verde:hover { background: var(--azul-oscuro); }
+.btn-verde:disabled { background: #A9C3F2; cursor: not-allowed; }
+.btn-blanco { background: #fff; color: var(--rojo); border-color: var(--rojo); }
+.btn-blanco:hover { background: #FDF1F1; }
+.btn-chico { min-width: 0; padding: 8px 14px; font-size: 13px; }
+.btn-gris { background: #fff; color: var(--azul); border-color: var(--azul); }
+.btn-gris:hover { background: var(--azul-suave); }
+
+/* ---------- Grillas de fecha / hora ---------- */
+.grilla-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.slot {
+  border: 1px solid var(--gris-borde); border-radius: 2px; background: #fff;
+  padding: 12px 6px; text-align: center; cursor: pointer; font-weight: 700; font-size: 15px;
+}
+.slot small { display: block; font-weight: 400; font-size: 11px; color: var(--texto-suave); }
+.slot:hover { border-color: var(--azul); }
+.slot.elegido { background: var(--azul); border-color: var(--azul); color: #fff; }
+.slot.elegido small { color: #CFE0FB; }
+.slot.lleno { background: var(--gris-fondo); color: #BDBDBD; cursor: not-allowed; border-style: dashed; }
+
+/* ---------- Badges de grado (código de colores internacional) ---------- */
+.badge-grado {
+  display: inline-block; padding: 4px 14px; border-radius: 2px;
+  font-weight: 800; font-size: 13.5px; letter-spacing: .5px;
+  border: 2px solid transparent;
+}
+.badge-grado.jet   { background: var(--jet);   color: #fff; }
+.badge-grado.avgas { background: var(--avgas); color: #fff; }
+.badge-grado.grande { font-size: 22px; padding: 12px 30px; }
+
+.banner-grado {
+  border-radius: 2px; padding: 18px; text-align: center; margin: 14px 0;
+}
+.banner-grado.jet   { background: var(--jet);   color: #fff; }
+.banner-grado.avgas { background: var(--avgas); color: #fff; }
+.banner-grado .titulo { font-size: 26px; font-weight: 800; letter-spacing: 1px; }
+.banner-grado .detalle { font-size: 13px; opacity: .85; margin-top: 4px; }
+
+/* ---------- Alertas ---------- */
+.alerta { border-radius: 2px; padding: 13px 16px; font-size: 13.5px; margin: 12px 0; line-height: 1.5; }
+.alerta.roja     { background: #FDECEC; border: 1px solid var(--rojo); border-left: 4px solid var(--rojo); color: #8E1B1B; }
+.alerta.amarilla { background: #FEF7E0; border: 1px solid #E8A800; border-left: 4px solid #E8A800; color: #7A5200; }
+.alerta.verde    { background: #EAF5EC; border: 1px solid var(--exito); border-left: 4px solid var(--exito); color: #14532D; }
+.alerta.azul     { background: var(--azul-suave); border: 1px solid var(--azul); border-left: 4px solid var(--azul); color: #0A3577; }
+.alerta strong { font-weight: 800; }
+
+/* ---------- Tarjeta aeronave ---------- */
+.card-aeronave {
+  border: 1px solid var(--gris-borde); border-radius: 2px;
+  padding: 16px 18px; background: #fff; margin-top: 12px;
+}
+.card-aeronave .mat { font-size: 20px; font-weight: 800; letter-spacing: 1px; }
+.card-aeronave .dato { font-size: 13.5px; color: var(--texto-suave); margin-top: 3px; }
+
+/* ---------- Tablas ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; padding: 10px; border-bottom: 2px solid var(--azul);
+     font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--texto-suave); font-weight: 700; }
+td { padding: 10px; border-bottom: 1px solid #EEEEEE; vertical-align: middle; }
+tr:hover td { background: var(--gris-fondo); }
+.tabla-scroll { overflow-x: auto; }
+
+.badge-estado { display: inline-block; padding: 3px 10px; border-radius: 2px; font-size: 12px; font-weight: 700; }
+
+/* ---------- Turno card ---------- */
+.turno-card {
+  border: 1px solid var(--gris-borde); border-left: 4px solid var(--azul);
+  border-radius: 2px; padding: 16px; margin-bottom: 12px; background: #fff;
+}
+.turno-card .encabezado { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.turno-card .hora { font-size: 19px; font-weight: 800; }
+.turno-card .datos { font-size: 13.5px; color: var(--texto-suave); line-height: 1.7; }
+.turno-card .acciones { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ---------- Checklist ---------- */
+.check-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  border: 1px solid var(--gris-borde); border-radius: 2px;
+  padding: 13px 15px; margin-bottom: 10px; cursor: pointer; background: #fff;
+}
+.check-item input[type=checkbox] { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--azul); cursor: pointer; }
+.check-item.ok { border-color: var(--azul); background: var(--azul-suave); }
+.check-item .texto { font-size: 14px; line-height: 1.5; }
+
+/* ---------- Modal ---------- */
+.modal-fondo {
+  position: fixed; inset: 0; background: rgba(18, 24, 38, .6);
+  display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px;
+}
+.modal {
+  background: #fff; border-radius: 2px; border-top: 4px solid var(--azul);
+  padding: 26px; max-width: 640px; width: 100%; max-height: 90vh; overflow-y: auto;
+}
+.modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+
+.oculto { display: none !important; }
+
+/* ---------- Resumen ---------- */
+.resumen { border: 1px solid var(--gris-borde); border-radius: 2px; overflow: hidden; margin-bottom: 14px; }
+.resumen .fila { display: grid; grid-template-columns: 220px 1fr; border-bottom: 1px solid #EEEEEE; }
+.resumen .fila:last-child { border-bottom: none; }
+.resumen .fila > div { padding: 10px 14px; font-size: 14px; }
+.resumen .fila > div:first-child { background: var(--gris-fondo); color: var(--texto-suave); font-weight: 600; }
+
+footer {
+  text-align: center; color: #B8C6E4; font-size: 12px;
+  padding: 22px; background: #0A2A66; border-top: 4px solid var(--azul);
+}
+footer a { color: #fff; cursor: pointer; text-decoration: underline; }
+
+@media (max-width: 720px) {
+  .fila-form { grid-template-columns: 1fr; gap: 4px; }
+  .fila-form label { padding-top: 0; }
+  .resumen .fila { grid-template-columns: 1fr; }
+  .btn { min-width: 100%; }
+  header { padding: 0 16px; }
+}
+
+/* ---------- Login / registro ---------- */
+.login-wrap { max-width: 460px; margin: 60px auto; padding: 0 20px; }
+.login-wrap .panel { padding: 34px; border-top: 4px solid var(--azul); }
+.login-logo { text-align: center; margin-bottom: 22px; }
+.login-logo .iso {
+  width: 60px; height: 60px; border-radius: 2px; margin: 0 auto 12px;
+  background: var(--azul); color: #fff; display: flex; align-items: center;
+  justify-content: center; font-weight: 800; font-style: italic; font-size: 22px; letter-spacing: -0.5px;
+}
+.login-wrap h2 { text-align: center; font-size: 20px; margin-bottom: 4px; font-weight: 700; }
+.login-wrap .subtitulo { text-align: center; }
+.login-wrap .fila-login { margin-bottom: 12px; }
+.login-wrap .fila-login label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 5px; }
+.login-alt { text-align: center; margin-top: 16px; font-size: 13.5px; color: var(--texto-suave); line-height: 2; }
+.login-alt a { color: var(--azul); cursor: pointer; text-decoration: underline; font-weight: 700; }
+
+/* ---------- Campanita / usuario ---------- */
+.usuario-chip { display: flex; align-items: center; gap: 10px; font-size: 13px; margin-left: 14px; }
+.usuario-chip .rol-tag {
+  background: var(--azul-suave); color: var(--azul); border: 1px solid var(--azul);
+  border-radius: 2px; padding: 2px 10px; font-weight: 700; font-size: 11.5px; text-transform: uppercase;
+}
+.btn-campana { position: relative; border: 1px solid var(--gris-borde); background: #fff;
+  border-radius: 2px; padding: 8px 12px; cursor: pointer; font-size: 16px; }
+.btn-campana .punto {
+  position: absolute; top: -6px; right: -6px; background: var(--rojo); color: #fff;
+  border-radius: 2px; font-size: 10.5px; font-weight: 800; padding: 1px 6px;
+}
+.noti-item { border-bottom: 1px solid #EEEEEE; padding: 11px 4px; font-size: 13.5px; line-height: 1.55; }
+.noti-item.nueva { background: var(--azul-suave); border-left: 3px solid var(--azul); padding-left: 10px; }
+.noti-item small { color: var(--texto-suave); display: block; margin-top: 3px; }
+
+/* ---------- Config admin ---------- */
+.config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.config-grid .campo-cfg label { display: block; font-size: 12.5px; font-weight: 700; margin-bottom: 5px; }

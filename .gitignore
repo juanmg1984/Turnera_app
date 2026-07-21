@@ -1,0 +1,5 @@
+node_modules/
+turnera.db
+turnera.db-shm
+turnera.db-wal
+.claude/
