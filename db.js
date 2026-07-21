@@ -71,6 +71,14 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS reset_tokens (
      token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL,
      expira TEXT NOT NULL, usado INTEGER NOT NULL DEFAULT 0)`,
+  /* Claves de la API de consulta (solo lectura). Se guarda el hash:
+     la clave completa se muestra una única vez al generarla. */
+  `CREATE TABLE IF NOT EXISTS api_keys (
+     id TEXT PRIMARY KEY, nombre TEXT NOT NULL,
+     prefijo TEXT NOT NULL, hash TEXT NOT NULL UNIQUE,
+     creada_por TEXT NOT NULL, creada TEXT NOT NULL,
+     ultimo_uso TEXT, usos INTEGER NOT NULL DEFAULT 0,
+     activa INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS hangares (
      codigo TEXT PRIMARY KEY, nombre TEXT NOT NULL,
      activo INTEGER NOT NULL DEFAULT 1)`,

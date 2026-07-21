@@ -105,7 +105,7 @@ async function iniciar() {
   } catch { USER = null; }
   if (USER) {
     CONFIG = await api('/api/config').catch(() => ({}));
-    VISTA = USER.rol === 'cliente' ? 'pedir' : 'agenda';
+    VISTA = USER.rol === 'cliente' ? 'pedir' : 'dashboard';
     if (USER.rol === 'cliente') cargarNotis();
   }
   render();
@@ -281,6 +281,7 @@ function render() {
   renderNavSolo();
   if (VISTA === 'pedir') renderWizard();
   else if (VISTA === 'misturnos') renderMisTurnos();
+  else if (VISTA === 'dashboard') renderDashboard();
   else if (VISTA === 'agenda') renderAgenda();
   else if (VISTA === 'clientes') renderClientes();
   else if (VISTA === 'maestros') renderMaestros();
@@ -297,11 +298,13 @@ function renderNavSolo() {
       <button class="btn-campana" onclick="abrirNotis()" title="Novedades">🔔${sinLeer ? `<span class="punto">${sinLeer}</span>` : ''}</button>`;
   } else if (USER.rol === 'coordinador') {
     botones = `
+      <button class="${VISTA === 'dashboard' ? 'activo' : ''}" onclick="irA('dashboard')">Dashboard</button>
       <button class="${VISTA === 'agenda' ? 'activo' : ''}" onclick="irA('agenda')">Agenda</button>
       <button class="${VISTA === 'clientes' ? 'activo' : ''}" onclick="irA('clientes')">Clientes</button>
       <button class="${VISTA === 'maestros' ? 'activo' : ''}" onclick="irA('maestros')">Maestros</button>`;
   } else {
     botones = `
+      <button class="${VISTA === 'dashboard' ? 'activo' : ''}" onclick="irA('dashboard')">Dashboard</button>
       <button class="${VISTA === 'agenda' ? 'activo' : ''}" onclick="irA('agenda')">Agenda</button>
       <button class="${VISTA === 'clientes' ? 'activo' : ''}" onclick="irA('clientes')">Clientes</button>
       <button class="${VISTA === 'maestros' ? 'activo' : ''}" onclick="irA('maestros')">Maestros</button>
@@ -891,71 +894,232 @@ async function confirmarAbastecimiento(id, codigo, resultado) {
   });
 }
 
-/* ---------- Turno manual (coordinador): teléfono / mostrador, con sobreturno opcional ---------- */
+/* ============================================================
+   Turno manual (coordinador): teléfono / mostrador.
+   Buscador de matrículas, filtro por cliente, alta de aeronave y
+   de cliente a demanda, horario libre y sobreturno opcional.
+   ============================================================ */
+
+let TM = null;
+
 async function abrirTurnoManual() {
-  let aeronaves = [], hangares = [];
-  try { [aeronaves, hangares] = await Promise.all([api('/api/aeronaves'), api('/api/hangares')]); }
-  catch (e) { return errorModal(e); }
-  const optAero = aeronaves.map(a => `<option value="${esc(a.matricula)}" data-grado="${a.grado}">${esc(a.matricula)} — ${esc(a.tipo)} (${a.grado})</option>`).join('');
-  const optHan = hangares.map(h => `<option value="${h.codigo}">(${h.codigo}) ${esc(h.nombre)}</option>`).join('');
-  const optPago = FORMAS_PAGO.map(p => `<option>${p}</option>`).join('');
-  const hoy = hoyISO();
+  TM = {
+    modo: 'buscar', clientes: [], aeronaves: [], hangares: [], slots: [],
+    filtroCliente: '', busqueda: '', sel: null,
+    fecha: hoyISO(), hora: '', volumen: '', pago: FORMAS_PAGO[0], hangar: '', motivo: '', sobreturno: false,
+    nueva: { matricula: '', tipo: '', motor: '', grado: '', capacidad: '', hangar: '', cliente_id: '' },
+  };
+  try {
+    const [clientes, aeronaves, hangares] = await Promise.all([
+      api('/api/clientes'), api('/api/aeronaves'), api('/api/hangares')]);
+    TM.clientes = clientes; TM.aeronaves = aeronaves; TM.hangares = hangares;
+  } catch (e) { return errorModal(e); }
+  renderTurnoManual();
+  await tmCargarSlots();
+}
+
+function tmFiltradas() {
+  const q = TM.busqueda.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return TM.aeronaves.filter(a => {
+    if (TM.filtroCliente && a.cliente_id !== TM.filtroCliente) return false;
+    if (!q) return true;
+    const mat = a.matricula.replace(/[^A-Z0-9]/g, '');
+    return mat.includes(q) || a.tipo.toUpperCase().includes(TM.busqueda.trim().toUpperCase());
+  });
+}
+
+function tmListaHTML() {
+  const lista = tmFiltradas();
+  if (!lista.length) {
+    return `<p class="subtitulo" style="margin:8px 0">Sin resultados. Podés <a style="color:var(--azul);cursor:pointer;font-weight:700" onclick="tmModoNueva()">dar de alta la aeronave</a>.</p>`;
+  }
+  return lista.slice(0, 40).map(a => `
+    <div class="card-aeronave" style="margin-top:8px;padding:10px 14px;cursor:pointer;${TM.sel?.matricula === a.matricula ? 'border-color:var(--azul);background:var(--azul-suave)' : ''}"
+         onclick="tmElegir('${esc(a.matricula)}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div>
+          <strong style="font-size:15px">${esc(a.matricula)}</strong>
+          <span style="color:var(--texto-suave);font-size:13px"> · ${esc(a.tipo)} · ${esc(a.cliente)}</span>
+        </div>
+        ${badgeGrado(a.grado)}
+      </div>
+    </div>`).join('') +
+    (lista.length > 40 ? `<p class="subtitulo" style="margin:8px 0">…y ${lista.length - 40} más. Afiná la búsqueda.</p>` : '');
+}
+
+function tmRefrescarLista() {
+  const cont = $('#tm-lista');
+  if (cont) cont.innerHTML = tmListaHTML();
+}
+
+function tmElegir(mat) {
+  TM.sel = TM.aeronaves.find(a => a.matricula === mat) || null;
+  if (TM.sel && !TM.hangar) TM.hangar = TM.sel.hangar;
+  renderTurnoManual();
+  tmCargarSlots();
+}
+
+async function tmCargarSlots() {
+  if (!TM.sel) { TM.slots = []; return; }
+  try {
+    const data = await api(`/api/turnos/slots?fecha=${TM.fecha}&grado=${encodeURIComponent(TM.sel.grado)}`);
+    TM.slots = data.slots;
+  } catch { TM.slots = []; }
+  const sel = $('#tm-sugerencias');
+  if (sel) sel.innerHTML = tmSugerenciasHTML();
+}
+
+function tmSugerenciasHTML() {
+  return `<option value="">— Sugerencias de la grilla —</option>` + TM.slots.map(s =>
+    `<option value="${s.hora}">${s.hora}${s.lleno ? (s.motivoLleno === 'recurso' ? ' — sin equipo' : ' — completo') : ` — ${s.libres} libre(s)`}</option>`).join('');
+}
+
+function renderTurnoManual() {
+  if (TM.modo === 'nueva') return renderTurnoManualNueva();
+  const optCli = TM.clientes.map(c => `<option value="${c.id}" ${TM.filtroCliente === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('');
+  const optHan = TM.hangares.map(h => `<option value="${h.codigo}" ${TM.hangar === h.codigo ? 'selected' : ''}>(${h.codigo}) ${esc(h.nombre)}</option>`).join('');
+  const optPago = FORMAS_PAGO.map(p => `<option ${TM.pago === p ? 'selected' : ''}>${p}</option>`).join('');
+
   modal(`<h3>➕ Turno manual</h3>
-    <div class="alerta azul">Para cargar un pedido recibido por teléfono o en el mostrador. Si marcás <strong>sobreturno</strong>, el turno no consume la capacidad ni el recurso de los turnos ya asignados.</div>
-    <div class="fila-form"><label>Aeronave (matrícula):</label>
-      <div class="campo"><select id="tm-matricula" onchange="tmActualizarGrado()">${optAero}</select></div></div>
-    <div id="tm-grado-info"></div>
-    <div class="fila-form"><label>Fecha:</label><div class="campo"><input type="date" id="tm-fecha" value="${hoy}" min="${hoy}" onchange="tmCargarHoras()"></div></div>
-    <div class="fila-form"><label>Horario:</label><div class="campo"><select id="tm-hora"></select></div></div>
-    <div class="fila-form"><label>Volumen aprox. (L):</label><div class="campo"><input type="number" id="tm-volumen" min="1" value="200"></div></div>
-    <div class="fila-form"><label>Forma de pago:</label><div class="campo"><select id="tm-pago">${optPago}</select></div></div>
-    <div class="fila-form"><label>Hangar / plataforma:</label><div class="campo"><select id="tm-hangar">${optHan}</select></div></div>
-    <div class="fila-form"><label>Motivo / nota:</label><div class="campo"><input type="text" id="tm-motivo" placeholder="Ej.: pedido telefónico"></div></div>
-    <label class="check-item" onclick="toggleCheck(this)" style="margin-top:6px">
-      <input type="checkbox" id="tm-sobreturno">
-      <span class="texto"><strong>Sobreturno</strong> — no gastar recursos de los turnos ya asignados (turno extra por encima de la capacidad del horario).</span>
-    </label>
+    <div class="alerta azul">Para un pedido recibido por teléfono o en el mostrador. Podés elegir <strong>cualquier horario</strong> (dentro o fuera de la grilla) y, si marcás <strong>sobreturno</strong>, el turno no consume la capacidad ni el recurso de los turnos ya asignados.</div>
+
+    <h4 style="font-size:14px;margin:16px 0 8px">1. Aeronave</h4>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <select style="max-width:240px" onchange="TM.filtroCliente=this.value;tmRefrescarLista()">
+        <option value="">Todos los clientes</option>${optCli}
+      </select>
+      <input type="text" placeholder="Buscar matrícula o tipo…" style="max-width:240px"
+             value="${esc(TM.busqueda)}" oninput="TM.busqueda=this.value;tmRefrescarLista()">
+      <button class="btn btn-gris btn-chico" onclick="tmModoNueva()">➕ Nueva aeronave</button>
+    </div>
+    <div id="tm-lista" style="max-height:210px;overflow-y:auto">${tmListaHTML()}</div>
+    ${TM.sel ? `<div style="margin:12px 0">${bannerGrado(TM.sel.grado, `${TM.sel.matricula} · ${TM.sel.tipo} · ${TM.sel.cliente}`)}</div>` : ''}
+
+    ${TM.sel ? `
+    <h4 style="font-size:14px;margin:16px 0 8px">2. Turno</h4>
+    <div class="fila-form"><label>Fecha:</label>
+      <div class="campo"><input type="date" value="${TM.fecha}" min="${hoyISO()}"
+        onchange="TM.fecha=this.value;tmCargarSlots()"></div></div>
+    <div class="fila-form"><label>Horario:<small>Cualquier hora, dentro o fuera de la grilla</small></label>
+      <div class="campo" style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="time" id="tm-hora" value="${TM.hora}" style="max-width:130px" onchange="TM.hora=this.value">
+        <select id="tm-sugerencias" style="max-width:250px"
+          onchange="if(this.value){TM.hora=this.value;document.getElementById('tm-hora').value=this.value}">
+          ${tmSugerenciasHTML()}
+        </select>
+      </div></div>
+    <div class="fila-form"><label>Volumen aprox. (L):</label>
+      <div class="campo"><input type="number" min="1" value="${esc(TM.volumen)}" onchange="TM.volumen=this.value"></div></div>
+    <div class="fila-form"><label>Forma de pago:</label>
+      <div class="campo"><select onchange="TM.pago=this.value">${optPago}</select></div></div>
+    <div class="fila-form"><label>Hangar / plataforma:</label>
+      <div class="campo"><select onchange="TM.hangar=this.value"><option value="">—</option>${optHan}</select></div></div>
+    <div class="fila-form"><label>Motivo / nota:</label>
+      <div class="campo"><input type="text" value="${esc(TM.motivo)}" placeholder="Ej.: pedido telefónico" onchange="TM.motivo=this.value"></div></div>
+    <label class="check-item ${TM.sobreturno ? 'ok' : ''}" style="margin-top:6px">
+      <input type="checkbox" ${TM.sobreturno ? 'checked' : ''} onchange="TM.sobreturno=this.checked;renderTurnoManual()">
+      <span class="texto"><strong>Sobreturno</strong> — turno extra que no gasta la capacidad ni el equipo de los turnos ya asignados.</span>
+    </label>` : ''}
+
     <div class="botonera">
-      <button class="btn btn-verde" onclick="crearTurnoManual()">Crear turno</button>
+      <button class="btn btn-verde" ${TM.sel ? '' : 'disabled'} onclick="crearTurnoManual()">Crear turno</button>
       <button class="btn btn-gris" onclick="cerrarModal()">Cancelar</button>
     </div>`);
-  tmActualizarGrado();
-  await tmCargarHoras();
 }
 
-function tmGradoSel() {
-  const sel = $('#tm-matricula');
-  return sel && sel.selectedOptions[0] ? sel.selectedOptions[0].dataset.grado : null;
+/* ---------- Alta de aeronave (y de cliente) a demanda ---------- */
+
+function tmModoNueva() {
+  TM.modo = 'nueva';
+  if (!TM.nueva.cliente_id) TM.nueva.cliente_id = TM.filtroCliente || '';
+  if (!TM.nueva.matricula && TM.busqueda) TM.nueva.matricula = TM.busqueda;
+  renderTurnoManual();
 }
 
-function tmActualizarGrado() {
-  const g = tmGradoSel();
-  $('#tm-grado-info').innerHTML = g
-    ? `<div style="margin:0 0 12px">${bannerGrado(g, 'Grado bloqueado por el maestro de la matrícula seleccionada')}</div>` : '';
-  if ($('#tm-hora')) tmCargarHoras();
+function renderTurnoManualNueva() {
+  const n = TM.nueva;
+  const optCli = TM.clientes.map(c => `<option value="${c.id}" ${n.cliente_id === c.id ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('');
+  const optHan = TM.hangares.map(h => `<option value="${h.codigo}" ${n.hangar === h.codigo ? 'selected' : ''}>(${h.codigo}) ${esc(h.nombre)}</option>`).join('');
+  const esperado = n.motor ? MOTORES[n.motor].gradoEsperado : null;
+  const incoherente = n.motor && n.grado && n.grado !== esperado;
+
+  modal(`<h3>➕ Nueva aeronave</h3>
+    <div class="alerta azul">El grado queda <strong>bloqueado</strong> tras el alta: después solo un admin puede cambiarlo.</div>
+    <div class="fila-form"><label>Matrícula:<small>Sin guión: el sistema lo coloca</small></label>
+      <div class="campo"><input type="text" value="${esc(n.matricula)}" placeholder="LVABC" onchange="TM.nueva.matricula=this.value"></div></div>
+    <div class="fila-form"><label>Tipo:</label>
+      <div class="campo"><input type="text" value="${esc(n.tipo)}" placeholder="Cessna 172" onchange="TM.nueva.tipo=this.value"></div></div>
+    <div class="fila-form"><label>Cliente:</label>
+      <div class="campo" style="display:flex;gap:8px;flex-wrap:wrap">
+        <select style="max-width:240px" onchange="TM.nueva.cliente_id=this.value"><option value="">— Elegir —</option>${optCli}</select>
+        <input type="text" id="tm-nuevo-cliente" placeholder="…o nuevo cliente" style="max-width:190px">
+        <button class="btn btn-gris btn-chico" onclick="tmCrearCliente()">+ Crear</button>
+      </div></div>
+    <div class="fila-form"><label>Motor:</label>
+      <div class="campo"><select onchange="TM.nueva.motor=this.value;renderTurnoManual()"><option value=""></option>
+        ${Object.entries(MOTORES).map(([k, v]) => `<option value="${k}" ${n.motor === k ? 'selected' : ''}>${v.nombre}</option>`).join('')}
+      </select></div></div>
+    <div class="fila-form"><label>Grado:</label>
+      <div class="campo"><select onchange="TM.nueva.grado=this.value;renderTurnoManual()"><option value=""></option>
+        ${GRADOS.map(g => `<option value="${g}" ${n.grado === g ? 'selected' : ''}>${g}</option>`).join('')}
+      </select></div></div>
+    ${n.motor && !n.grado ? `<div class="alerta azul">💡 Para motor <strong>${MOTORES[n.motor].nombre}</strong> el grado esperado es <strong>${esperado}</strong>.</div>` : ''}
+    ${incoherente ? `<div class="alerta roja">🚨 <strong>ALERTA ANTI-MISFUELLING:</strong> para un motor ${MOTORES[n.motor].nombre.toLowerCase()} el grado esperado es <strong>${esperado}</strong>.
+      Si es una excepción real (ej. diésel aeronáutico), escribí el grado exacto para confirmar:
+      <div style="margin-top:8px"><input type="text" id="tm-conf-exc" placeholder="Escribí: ${esc(n.grado)}" style="max-width:280px"></div></div>` : ''}
+    <div class="fila-form"><label>Capacidad (L):</label>
+      <div class="campo"><input type="number" min="1" value="${esc(n.capacidad)}" onchange="TM.nueva.capacidad=this.value"></div></div>
+    <div class="fila-form"><label>Hangar habitual:</label>
+      <div class="campo"><select onchange="TM.nueva.hangar=this.value"><option value=""></option>${optHan}</select></div></div>
+    <div class="botonera">
+      <button class="btn btn-verde" onclick="tmCrearAeronave()">Registrar y usar</button>
+      <button class="btn btn-gris" onclick="TM.modo='buscar';renderTurnoManual()">Volver al buscador</button>
+    </div>`);
 }
 
-async function tmCargarHoras() {
-  const g = tmGradoSel();
-  const fecha = $('#tm-fecha').value;
-  if (!g || !fecha) return;
+async function tmCrearCliente() {
+  const nombre = $('#tm-nuevo-cliente').value.trim();
+  if (!nombre) return alertaModal('Falta el nombre', 'Escribí el nombre del cliente nuevo.');
   try {
-    const data = await api(`/api/turnos/slots?fecha=${fecha}&grado=${encodeURIComponent(g)}`);
-    const sobre = $('#tm-sobreturno')?.checked;
-    $('#tm-hora').innerHTML = data.slots.map(s =>
-      `<option value="${s.hora}" ${s.lleno && !sobre ? 'disabled' : ''}>${s.hora}${s.lleno ? (s.motivoLleno === 'recurso' ? ' — sin equipo' : ' — completo') : ` — ${s.libres} libre(s)`}</option>`).join('');
+    await api('/api/clientes', 'POST', { nombre });
+    TM.clientes = await api('/api/clientes');
+    const creado = TM.clientes.find(c => c.nombre.toLowerCase() === nombre.toLowerCase());
+    TM.nueva.cliente_id = creado ? creado.id : '';
+    renderTurnoManual();
+  } catch (e) { errorModal(e); }
+}
+
+async function tmCrearAeronave() {
+  const n = TM.nueva;
+  try {
+    const r = await api('/api/aeronaves', 'POST', {
+      matricula: n.matricula, tipo: n.tipo, motor: n.motor, grado: n.grado,
+      capacidad: n.capacidad, hangar: n.hangar, cliente_id: n.cliente_id,
+      confirmacion_excepcion: $('#tm-conf-exc') ? $('#tm-conf-exc').value : '',
+    });
+    TM.aeronaves = await api('/api/aeronaves');
+    TM.modo = 'buscar';
+    TM.busqueda = '';
+    TM.nueva = { matricula: '', tipo: '', motor: '', grado: '', capacidad: '', hangar: '', cliente_id: '' };
+    tmElegir(r.matricula);
+    if (r.parecidas?.length) {
+      alertaModal('Aeronave registrada — verificá la matrícula',
+        `Se registró ${r.matricula}. ⚠ Hay matrículas parecidas (${r.parecidas.join(', ')}): confirmá que no sea un error de tipeo.`);
+    }
   } catch (e) { errorModal(e); }
 }
 
 async function crearTurnoManual() {
+  if (!TM.sel) return alertaModal('Falta la aeronave', 'Elegí o registrá la aeronave.');
+  if (!TM.hora) return alertaModal('Falta el horario', 'Indicá el horario del turno.');
   try {
     const r = await api('/api/turnos', 'POST', {
-      matricula: $('#tm-matricula').value, fecha: $('#tm-fecha').value, hora: $('#tm-hora').value,
-      volumen: $('#tm-volumen').value, forma_pago: $('#tm-pago').value, hangar: $('#tm-hangar').value,
-      motivo: $('#tm-motivo').value, sobreturno: $('#tm-sobreturno').checked,
+      matricula: TM.sel.matricula, fecha: TM.fecha, hora: TM.hora,
+      volumen: TM.volumen, forma_pago: TM.pago, hangar: TM.hangar,
+      motivo: TM.motivo, sobreturno: TM.sobreturno,
     });
     cerrarModal(); render();
-    alertaModal('Turno creado', `${r.codigo} creado${r.sobreturno ? ' como SOBRETURNO' : ''}. Aparece en pendientes para que le asignes abastecedora y operador.`);
+    alertaModal('Turno creado', `${r.codigo} creado${r.sobreturno ? ' como SOBRETURNO' : ''} para ${TM.sel.matricula} el ${TM.fecha} a las ${TM.hora}. Aparece en pendientes para asignarle abastecedora y operador.`);
   } catch (e) { errorModal(e); }
 }
 
@@ -1009,6 +1173,121 @@ async function enviarReprogramar(id) {
     });
     cerrarModal(); render();
   } catch (e) { errorModal(e); }
+}
+
+/* ============================================================
+   COORDINADOR / ADMIN — Dashboard
+   ============================================================ */
+
+async function renderDashboard() {
+  if (!FILTRO_FECHA) FILTRO_FECHA = hoyISO();
+  let d;
+  try { d = await api(`/api/dashboard?fecha=${FILTRO_FECHA}`); } catch (e) { return errorModal(e); }
+
+  const est = Object.fromEntries(d.por_estado.map(e => [e.estado, e]));
+  const total = d.por_estado.reduce((s, e) => s + Number(e.cantidad), 0);
+  const litrosDia = d.por_grado.reduce((s, g) => s + Number(g.litros), 0);
+  const ocupacion = d.grilla.cupos ? Math.round(d.grilla.reservados / d.grilla.cupos * 100) : 0;
+
+  const tile = (valor, etiqueta, color) => `
+    <div class="panel" style="margin:0;text-align:center;padding:18px 12px;${color ? `border-top:3px solid ${color}` : ''}">
+      <div style="font-size:30px;font-weight:800;line-height:1.1">${valor}</div>
+      <div style="font-size:12px;color:var(--texto-suave);text-transform:uppercase;letter-spacing:.4px;margin-top:4px">${etiqueta}</div>
+    </div>`;
+
+  const barra = (pct, color) => `
+    <div style="background:var(--gris-fondo);border-radius:2px;height:8px;overflow:hidden;margin-top:5px">
+      <div style="width:${Math.min(100, pct)}%;height:100%;background:${color}"></div></div>`;
+
+  const filaGrado = (g) => {
+    const pct = litrosDia ? Math.round(Number(g.litros) / litrosDia * 100) : 0;
+    return `<div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>${badgeGrado(g.grado)}</span>
+        <span style="font-size:13.5px;color:var(--texto-suave)">${g.cantidad} turno(s) · <strong style="color:var(--texto)">${Number(g.litros).toLocaleString('es-AR')} L</strong> (${pct}%)</span>
+      </div>${barra(pct, g.grado === 'JET A-1' ? 'var(--jet)' : 'var(--avgas)')}
+    </div>`;
+  };
+
+  const flota = d.flota.map(f => `<tr><td>${badgeGrado(f.grado)}</td>
+    <td>${f.operativas} operativa(s) de ${f.total}</td>
+    <td>${Number(f.operativas) < Number(f.total) ? '<span style="color:var(--rojo);font-weight:700">⚠ equipo fuera de servicio</span>' : '✅ flota completa'}</td></tr>`).join('');
+
+  const usoAb = d.por_abastecedora.length
+    ? d.por_abastecedora.map(a => `<tr><td><strong>${esc(a.id)}</strong></td><td>${a.turnos}</td>
+        <td>${Number(a.litros).toLocaleString('es-AR')} L</td></tr>`).join('')
+    : `<tr><td colspan="3" style="color:var(--texto-suave)">Sin asignaciones para la fecha.</td></tr>`;
+
+  const clientes = d.por_cliente.length
+    ? d.por_cliente.map(c => `<tr><td>${esc(c.cliente)}</td><td>${c.turnos}</td>
+        <td>${Number(c.litros).toLocaleString('es-AR')} L</td></tr>`).join('')
+    : `<tr><td colspan="3" style="color:var(--texto-suave)">Sin turnos para la fecha.</td></tr>`;
+
+  const proximos = d.proximos.length
+    ? d.proximos.map(t => `<tr>
+        <td><strong>${t.hora}</strong></td>
+        <td>${esc(t.matricula)}</td>
+        <td>${badgeGrado(t.grado)}</td>
+        <td>${Number(t.volumen).toLocaleString('es-AR')} L</td>
+        <td>${esc(t.cliente)}</td>
+        <td>${badgeEstado(t.estado)}${t.sobreturno ? ' <span class="rol-tag" style="background:#ffedd5;color:#9a3412;border-color:#9a3412">SOBRE</span>' : ''}</td>
+        <td>${esc(t.abastecedora || '—')}</td></tr>`).join('')
+    : `<tr><td colspan="7" style="color:var(--texto-suave)">No hay turnos activos para la fecha.</td></tr>`;
+
+  $('#main').innerHTML = `
+    <h2 class="titulo-seccion">Dashboard</h2>
+    <p class="subtitulo">Estado operativo de la aeroplanta para la fecha seleccionada.</p>
+
+    <div class="panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <label style="font-weight:700;font-size:14px">Fecha:</label>
+      <input type="date" style="max-width:190px" value="${FILTRO_FECHA}" onchange="FILTRO_FECHA=this.value;render()">
+      <span style="color:var(--texto-suave);font-size:13.5px">${fechaLegible(FILTRO_FECHA)}</span>
+      <button class="btn btn-gris btn-chico" style="margin-left:auto" onclick="irA('agenda')">Ir a la agenda →</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:18px">
+      ${tile(total, 'Turnos del día', 'var(--azul)')}
+      ${tile(Number(est.PENDIENTE?.cantidad || 0), 'Sin asignar', '#b45309')}
+      ${tile(Number(est.PROGRAMADO?.cantidad || 0), 'Programados', '#1d4ed8')}
+      ${tile(Number(est.ABASTECIDO?.cantidad || 0), 'Abastecidos', '#15803d')}
+      ${tile(Number(est.AUSENTE?.cantidad || 0), 'No se presentó', '#9a3412')}
+      ${tile(litrosDia.toLocaleString('es-AR'), 'Litros previstos', 'var(--azul)')}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px">
+      <div class="panel">
+        <h3 style="margin-bottom:12px">⛽ Volumen por grado</h3>
+        ${d.por_grado.length ? d.por_grado.map(filaGrado).join('') : '<p class="subtitulo" style="margin:0">Sin turnos para la fecha.</p>'}
+      </div>
+      <div class="panel">
+        <h3 style="margin-bottom:6px">📊 Ocupación de la grilla</h3>
+        <p class="subtitulo" style="margin:0 0 8px">${d.grilla.reservados} de ${d.grilla.cupos} cupos (${d.grilla.slots} horarios × ${d.grilla.capacidad})${d.sobreturnos ? ` · <strong>${d.sobreturnos} sobreturno(s)</strong> fuera de cupo` : ''}</p>
+        <div style="font-size:26px;font-weight:800">${ocupacion}%</div>
+        ${barra(ocupacion, 'var(--azul)')}
+        <h3 style="margin:18px 0 8px">🚛 Flota</h3>
+        <div class="tabla-scroll"><table><tbody>${flota}</tbody></table></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px">
+      <div class="panel">
+        <h3 style="margin-bottom:12px">🚛 Uso de abastecedoras</h3>
+        <div class="tabla-scroll"><table>
+          <thead><tr><th>Equipo</th><th>Turnos</th><th>Litros</th></tr></thead><tbody>${usoAb}</tbody></table></div>
+      </div>
+      <div class="panel">
+        <h3 style="margin-bottom:12px">🏢 Clientes del día</h3>
+        <div class="tabla-scroll"><table>
+          <thead><tr><th>Cliente</th><th>Turnos</th><th>Litros</th></tr></thead><tbody>${clientes}</tbody></table></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin-bottom:12px">🕐 Turnos activos del día</h3>
+      <div class="tabla-scroll"><table>
+        <thead><tr><th>Hora</th><th>Matrícula</th><th>Grado</th><th>Volumen</th><th>Cliente</th><th>Estado</th><th>Equipo</th></tr></thead>
+        <tbody>${proximos}</tbody></table></div>
+    </div>`;
 }
 
 /* ============================================================
@@ -1197,16 +1476,35 @@ async function enviarCambioGrado(matricula, grado) {
 }
 
 async function tabHangares() {
-  const hangares = await api('/api/hangares');
-  const filas = hangares.map(h => `<tr><td><strong>${h.codigo}</strong></td><td>${esc(h.nombre)}</td>
-    <td><button class="btn btn-gris btn-chico" onclick="renombrarHangar('${h.codigo}','${esc(h.nombre)}')">Renombrar</button></td></tr>`).join('');
-  return `<h3 style="margin-bottom:12px">Hangares y plataformas (${hangares.length})</h3>
-    <div class="tabla-scroll"><table><thead><tr><th>Código</th><th>Nombre</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>
+  const hangares = await api('/api/hangares?todos=1');
+  const filas = hangares.map(h => `<tr${h.activo ? '' : ' style="opacity:.55"'}>
+    <td><strong>${h.codigo}</strong></td><td>${esc(h.nombre)}</td>
+    <td>${h.activo ? '✅ Activo' : '⛔ Desactivado'}</td>
+    <td style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-gris btn-chico" onclick="renombrarHangar('${h.codigo}','${esc(h.nombre)}')">Renombrar</button>
+      <button class="btn btn-gris btn-chico" onclick="toggleHangar('${h.codigo}',${h.activo ? 0 : 1})">${h.activo ? 'Desactivar' : 'Reactivar'}</button>
+      <button class="btn btn-blanco btn-chico" onclick="borrarHangar('${h.codigo}','${esc(h.nombre)}')">Eliminar</button>
+    </td></tr>`).join('');
+  return `<h3 style="margin-bottom:12px">Hangares y posiciones (${hangares.length})</h3>
+    <div class="alerta azul">Eliminar borra la posición definitivamente. Si está en uso (aeronaves o turnos) el sistema no la borra para no romper el histórico: en ese caso desactivala y deja de ofrecerse.</div>
+    <div class="tabla-scroll"><table><thead><tr><th>Código</th><th>Nombre</th><th>Estado</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
       <input type="text" id="nh-codigo" placeholder="Código (ej. H15)" style="max-width:150px">
       <input type="text" id="nh-nombre" placeholder="Nombre" style="max-width:320px">
       <button class="btn btn-verde btn-chico" onclick="altaHangar()">+ Agregar</button>
     </div>`;
+}
+
+async function toggleHangar(codigo, activo) {
+  try { await api(`/api/hangares/${codigo}`, 'PUT', { activo: !!activo }); render(); }
+  catch (e) { errorModal(e); }
+}
+
+function borrarHangar(codigo, nombre) {
+  confirmarModal('Eliminar posición', `¿Eliminar definitivamente ${codigo} — ${nombre}?`, async () => {
+    try { await api(`/api/hangares/${codigo}`, 'DELETE'); render(); }
+    catch (e) { errorModal(e); }
+  });
 }
 
 async function altaHangar() {
@@ -1387,7 +1685,89 @@ async function renderConfig() {
       <div class="botonera">
         <button class="btn btn-verde" onclick="guardarConfig()">Guardar configuración</button>
       </div>
+    </div>
+    <div class="panel" id="panel-apikeys"></div>`;
+  renderApiKeys();
+}
+
+/* ---------- API de consulta: claves de aplicación (solo admin) ---------- */
+
+async function renderApiKeys() {
+  let keys = [];
+  try { keys = await api('/api/apikeys'); } catch (e) { return errorModal(e); }
+  const filas = keys.length ? keys.map(k => `
+    <tr${k.activa ? '' : ' style="opacity:.55"'}>
+      <td><strong>${esc(k.nombre)}</strong></td>
+      <td><code style="font-size:12.5px">${esc(k.prefijo)}…</code></td>
+      <td>${k.activa ? '✅ Activa' : '⛔ Revocada'}</td>
+      <td>${k.usos}</td>
+      <td>${k.ultimo_uso ? new Date(k.ultimo_uso).toLocaleString('es-AR') : '—'}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        ${k.activa ? `<button class="btn btn-gris btn-chico" onclick="revocarApiKey('${k.id}','${esc(k.nombre)}')">Revocar</button>` : ''}
+        <button class="btn btn-blanco btn-chico" onclick="eliminarApiKey('${k.id}','${esc(k.nombre)}')">Eliminar</button>
+      </td>
+    </tr>`).join('')
+    : `<tr><td colspan="6" style="color:var(--texto-suave)">Todavía no generaste claves.</td></tr>`;
+
+  $('#panel-apikeys').innerHTML = `
+    <h3 style="margin-bottom:6px">🔌 API de consulta — claves de aplicación</h3>
+    <p class="subtitulo" style="margin:0 0 12px">Acceso <strong>de solo lectura</strong> a turnos, clientes, matrículas, abastecedoras y hangares, para integrar con otros sistemas (BI, reportes). La clave se muestra <strong>una sola vez</strong> al generarla.</p>
+    <div class="tabla-scroll"><table>
+      <thead><tr><th>Nombre</th><th>Clave</th><th>Estado</th><th>Usos</th><th>Último uso</th><th></th></tr></thead>
+      <tbody>${filas}</tbody></table></div>
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <input type="text" id="ak-nombre" placeholder="Para qué se usa (ej. Power BI)" style="max-width:300px">
+      <button class="btn btn-verde btn-chico" onclick="crearApiKey()">+ Generar clave</button>
+      <button class="btn btn-gris btn-chico" onclick="verDocsApi()">📖 Ver documentación</button>
     </div>`;
+}
+
+async function crearApiKey() {
+  const nombre = $('#ak-nombre').value.trim();
+  if (!nombre) return alertaModal('Falta el nombre', 'Poné un nombre que identifique para qué se usa la clave.');
+  try {
+    const r = await api('/api/apikeys', 'POST', { nombre });
+    modal(`<h3>🔑 Clave generada</h3>
+      <div class="alerta amarilla">⚠ <strong>Copiala ahora:</strong> por seguridad no se vuelve a mostrar. Si la perdés, generá una nueva y revocá esta.</div>
+      <div style="background:var(--gris-fondo);border:1px solid var(--gris-borde);padding:14px;word-break:break-all;font-family:monospace;font-size:13.5px">${esc(r.clave)}</div>
+      <p class="subtitulo" style="margin-top:12px">Usala en el header <code>X-API-Key</code> de cada pedido.</p>
+      <div class="botonera"><button class="btn btn-verde" onclick="cerrarModal();renderApiKeys()">Ya la copié</button></div>`);
+    $('#ak-nombre').value = '';
+  } catch (e) { errorModal(e); }
+}
+
+function revocarApiKey(id, nombre) {
+  confirmarModal('Revocar clave', `¿Revocar "${nombre}"? Las integraciones que la usen dejarán de funcionar.`, async () => {
+    try { await api(`/api/apikeys/${id}/revocar`, 'PUT', {}); renderApiKeys(); } catch (e) { errorModal(e); }
+  });
+}
+
+function eliminarApiKey(id, nombre) {
+  confirmarModal('Eliminar clave', `¿Eliminar definitivamente "${nombre}"?`, async () => {
+    try { await api(`/api/apikeys/${id}`, 'DELETE'); renderApiKeys(); } catch (e) { errorModal(e); }
+  });
+}
+
+function verDocsApi() {
+  const base = location.origin;
+  modal(`<h3>📖 API de consulta (v1)</h3>
+    <p style="font-size:14px;line-height:1.7">Solo lectura. Autenticación por header:</p>
+    <div style="background:var(--gris-fondo);border:1px solid var(--gris-borde);padding:12px;font-family:monospace;font-size:12.5px;margin-bottom:14px">X-API-Key: sf_live_…</div>
+    <table style="font-size:13px">
+      <thead><tr><th>Endpoint</th><th>Descripción</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/v1</code></td><td>Índice del servicio</td></tr>
+        <tr><td><code>GET /api/v1/turnos</code></td><td>Turnos. Filtros: <code>desde, hasta, estado, cliente, matricula, limit</code></td></tr>
+        <tr><td><code>GET /api/v1/clientes</code></td><td>Clientes con conteo de aeronaves y turnos</td></tr>
+        <tr><td><code>GET /api/v1/aeronaves</code></td><td>Maestro de matrículas. Filtros: <code>cliente, grado</code></td></tr>
+        <tr><td><code>GET /api/v1/abastecedoras</code></td><td>Equipos y su grado</td></tr>
+        <tr><td><code>GET /api/v1/hangares</code></td><td>Hangares y posiciones</td></tr>
+        <tr><td><code>GET /api/v1/resumen</code></td><td>Totales por estado, grado y cliente. Filtros: <code>desde, hasta</code></td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:14px;margin-top:14px">Ejemplo:</p>
+    <div style="background:var(--gris-fondo);border:1px solid var(--gris-borde);padding:12px;font-family:monospace;font-size:12px;word-break:break-all">curl -H "X-API-Key: sf_live_…" "${base}/api/v1/turnos?desde=2026-07-01&estado=ABASTECIDO"</div>
+    <div class="botonera"><button class="btn btn-verde" onclick="cerrarModal()">Cerrar</button></div>`);
 }
 
 async function guardarConfig() {

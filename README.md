@@ -39,13 +39,15 @@ Cambiá estas contraseñas en el primer uso (Maestros → Usuarios).
 | Pedir turnos (solo con matrículas de su cliente) | ✅ | — | — |
 | Alta de aeronave en la primera carga | ✅ | ✅ | ✅ |
 | Cancelar turnos (motivo obligatorio) | ✅ (los suyos) | ✅ | ✅ |
+| Dashboard operativo del día | — | ✅ | ✅ |
 | Asignar abastecedora + operador | — | ✅ | ✅ |
 | **Confirmar abastecimiento** (abastecido / no se presentó) | — | ✅ | ✅ |
 | **Turno manual** (teléfono / mostrador), con sobreturno opcional | — | ✅ | ✅ |
 | Reprogramar horario (comentario al cliente obligatorio) | — | ✅ | ✅ |
 | Agregar usuarios adicionales a un cliente | — | ✅ | ✅ |
-| **ABM de clientes, matrículas, hangares y abastecedoras** | — | ✅ | ✅ |
+| **ABM de clientes, matrículas, hangares y abastecedoras** (incluye eliminar posiciones) | — | ✅ | ✅ |
 | ABM de operadores y usuarios | — | — | ✅ |
+| **Claves de la API de consulta** (generar / revocar) | — | — | ✅ |
 | **Cambiar el grado de una matrícula ya asignado** | — | — | ✅ (con confirmación escrita) |
 | Configurar la grilla de turnos (intervalo — 15 min por defecto —, horario, capacidad, anticipación) | — | — | ✅ |
 
@@ -58,8 +60,13 @@ Reglas clave:
 - **Estados del turno**: PENDIENTE → PROGRAMADO → **ABASTECIDO** (se cargó) | **AUSENTE** (no se
   presentó), o CANCELADO. El coordinador confirma el resultado con un botón; los turnos
   PROGRAMADOS de días pasados que no se gestionen se asumen **ABASTECIDOS al cierre del día**.
-- **Sobreturno**: el coordinador puede cargar un turno manual que **no consume la capacidad ni
-  el recurso** de los turnos ya asignados (para pedidos por teléfono o en el mostrador).
+- **Turno manual del coordinador** (teléfono / mostrador): buscador de matrículas con filtro por
+  cliente, **alta de aeronave y de cliente en el momento**, y **cualquier horario** (dentro o
+  fuera de la grilla). Opcionalmente **sobreturno**: no consume la capacidad ni el equipo de los
+  turnos ya asignados.
+- **Abastecedoras fuera de servicio**: el estado "fuera de servicio" solo restringe **el día en
+  curso**. Para turnos futuros se puede planificar con un equipo que hoy está en taller.
+- **API de consulta** de solo lectura con app key para integrar BI/reportes — ver [API.md](API.md).
 - El **registro autogestionado permite un solo usuario por cliente**; los usuarios adicionales
   los agrega únicamente el coordinador (o el admin).
 - Toda programación, reprogramación, cancelación o confirmación hecha por la planta genera una

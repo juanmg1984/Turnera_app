@@ -16,6 +16,9 @@ const {
   enviarMail, mailConfigurado, mailBienvenida, mailRecuperacion, mailPasswordRestablecida,
 } = require('./mailer');
 const { randomBytes } = require('node:crypto');
+const {
+  crearApiKey, listarApiKeys, revocarApiKey, eliminarApiKey, autenticarApiKey,
+} = require('./apikeys');
 
 const app = express();
 app.use(express.json());
@@ -295,7 +298,14 @@ app.put('/api/config', requiere('admin'), async (req, res, next) => {
    ============================================================ */
 
 app.get('/api/hangares', requiere(), async (req, res, next) => {
-  try { res.json(await query(`SELECT * FROM hangares WHERE activo = 1 ORDER BY rowid`)); } catch (e) { next(e); }
+  try {
+    /* El staff puede pedir el listado completo (incluye desactivados) para gestionarlos. */
+    const staff = req.usuario.rol !== 'cliente';
+    const todos = staff && String(req.query.todos || '') === '1';
+    res.json(await query(
+      todos ? `SELECT * FROM hangares ORDER BY rowid`
+            : `SELECT * FROM hangares WHERE activo = 1 ORDER BY rowid`));
+  } catch (e) { next(e); }
 });
 
 app.post('/api/hangares', requiere('admin', 'coordinador'), async (req, res, next) => {
@@ -319,6 +329,26 @@ app.put('/api/hangares/:codigo', requiere('admin', 'coordinador'), async (req, r
     if (activo !== undefined) {
       await query(`UPDATE hangares SET activo = ? WHERE codigo = ?`, [activo ? 1 : 0, req.params.codigo]);
     }
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/* Eliminar hangar / posición. Si está en uso no se borra (se rompería el
+   histórico): en ese caso se ofrece desactivarlo para que deje de ofrecerse. */
+app.delete('/api/hangares/:codigo', requiere('admin', 'coordinador'), async (req, res, next) => {
+  try {
+    const codigo = String(req.params.codigo).toUpperCase();
+    const h = (await query(`SELECT * FROM hangares WHERE codigo = ?`, [codigo]))[0];
+    if (!h) return errj(res, 404, 'Hangar / posición inexistente.');
+    const enAeronaves = Number((await query(
+      `SELECT COUNT(*) AS n FROM aeronaves WHERE hangar = ?`, [codigo]))[0].n);
+    const enTurnos = Number((await query(
+      `SELECT COUNT(*) AS n FROM turnos WHERE hangar = ?`, [codigo]))[0].n);
+    if (enAeronaves || enTurnos) {
+      return errj(res, 409,
+        `No se puede eliminar ${codigo}: está en uso (${enAeronaves} aeronave(s) y ${enTurnos} turno(s)). Podés desactivarlo para que deje de ofrecerse sin perder el histórico.`);
+    }
+    await query(`DELETE FROM hangares WHERE codigo = ?`, [codigo]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -670,6 +700,18 @@ app.put('/api/aeronaves/:matricula/grado', requiere('admin'), async (req, res, n
 /* Estados que "reservan" un lugar en la grilla (bloquean capacidad/recurso) */
 const ESTADOS_RESERVAN = "('PENDIENTE','PROGRAMADO')";
 
+/* Regla operativa: que una abastecedora esté fuera de servicio solo restringe
+   el día en curso (y los pasados). Para fechas futuras se asume que el equipo
+   volverá a estar operativo, así que se puede planificar con ella. */
+const restringePorServicio = (fecha) => fecha <= hoyBuenosAires();
+
+async function contarAbastecedoras(grado, fecha) {
+  const sql = restringePorServicio(fecha)
+    ? `SELECT COUNT(*) AS n FROM abastecedoras WHERE grado = ? AND activa = 1`
+    : `SELECT COUNT(*) AS n FROM abastecedoras WHERE grado = ?`;
+  return Number((await query(sql, [grado]))[0].n);
+}
+
 app.get('/api/turnos/slots', requiere(), async (req, res, next) => {
   try {
     const fecha = String(req.query.fecha || '');
@@ -687,8 +729,7 @@ app.get('/api/turnos/slots', requiere(), async (req, res, next) => {
     let recursoGrado = null;
     let mapaGrado = {};
     if (grado) {
-      recursoGrado = Number((await query(
-        `SELECT COUNT(*) AS n FROM abastecedoras WHERE grado = ? AND activa = 1`, [grado]))[0].n);
+      recursoGrado = await contarAbastecedoras(grado, fecha);
       const og = await query(
         `SELECT hora, COUNT(*) AS n FROM turnos
           WHERE fecha = ? AND grado = ? AND sobreturno = 0 AND estado IN ${ESTADOS_RESERVAN} GROUP BY hora`,
@@ -750,11 +791,16 @@ app.get('/api/turnos', requiere(), async (req, res, next) => {
 /* Valida fecha/hora. opts: { grado, esSobreturno, saltearLimiteDias }.
    El sobreturno saltea capacidad y recurso; el staff saltea el límite de anticipación. */
 async function validarSlot(fecha, hora, ignorarTurnoId, opts = {}) {
-  const { grado = null, esSobreturno = false, saltearLimiteDias = false } = opts;
+  const { grado = null, esSobreturno = false, saltearLimiteDias = false, horarioLibre = false } = opts;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha || '')) return 'Fecha inválida.';
   if (fecha < hoyBuenosAires()) return 'La fecha ya pasó.';
   const { slots, capacidad, dias } = await generarSlots();
-  if (!slots.includes(hora)) return 'El horario no corresponde a la grilla de turnos vigente.';
+  /* El staff puede fijar cualquier horario (fuera de la grilla) en turnos manuales. */
+  if (horarioLibre) {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora || '')) return 'Horario inválido (formato HH:MM).';
+  } else if (!slots.includes(hora)) {
+    return 'El horario no corresponde a la grilla de turnos vigente.';
+  }
   if (!saltearLimiteDias) {
     const limite = new Date(Date.now() + dias * 86400e3).toISOString().slice(0, 10);
     if (fecha > limite) return `Solo se pueden pedir turnos hasta ${dias} días de anticipación.`;
@@ -768,8 +814,7 @@ async function validarSlot(fecha, hora, ignorarTurnoId, opts = {}) {
   if (Number(n[0].n) >= capacidad) return 'Ese horario ya está completo. Elegí otro (o el coordinador puede generar un sobreturno).';
 
   if (GRADOS.includes(grado)) {
-    const recurso = Number((await query(
-      `SELECT COUNT(*) AS n FROM abastecedoras WHERE grado = ? AND activa = 1`, [grado]))[0].n);
+    const recurso = await contarAbastecedoras(grado, fecha);
     const ng = Number((await query(
       `SELECT COUNT(*) AS n FROM turnos
         WHERE fecha = ? AND hora = ? AND grado = ? AND sobreturno = 0 AND estado IN ${ESTADOS_RESERVAN} AND id != ?`,
@@ -800,7 +845,7 @@ app.post('/api/turnos', requiere(), async (req, res, next) => {
     const esSobreturno = esStaff && !!b.sobreturno;
 
     const errSlot = await validarSlot(b.fecha, b.hora, null,
-      { grado: a.grado, esSobreturno, saltearLimiteDias: esStaff });
+      { grado: a.grado, esSobreturno, saltearLimiteDias: esStaff, horarioLibre: esStaff });
     if (errSlot) return errj(res, 400, errSlot);
     if (!(Number(b.volumen) > 0)) return errj(res, 400, 'Ingresá el volumen aproximado en litros.');
     if (!FORMAS_PAGO.includes(b.forma_pago)) return errj(res, 400, 'Seleccioná la forma de pago.');
@@ -837,8 +882,13 @@ app.put('/api/turnos/:id/asignar', requiere('coordinador', 'admin'), async (req,
       return errj(res, 400, `El turno está ${t.estado.toLowerCase()} y no se puede (re)asignar.`);
     }
 
-    const ab = (await query(`SELECT * FROM abastecedoras WHERE id = ? AND activa = 1`, [req.body?.abastecedora]))[0];
-    if (!ab) return errj(res, 400, 'Seleccioná una abastecedora activa.');
+    const ab = (await query(`SELECT * FROM abastecedoras WHERE id = ?`, [req.body?.abastecedora]))[0];
+    if (!ab) return errj(res, 400, 'Seleccioná una abastecedora.');
+    /* Fuera de servicio solo bloquea el día en curso: para turnos futuros
+       se puede planificar con un equipo que hoy está en taller. */
+    if (!ab.activa && restringePorServicio(t.fecha)) {
+      return errj(res, 400, `${ab.id} está fuera de servicio y el turno es de hoy (${t.fecha}). Para fechas futuras sí podés asignarla.`);
+    }
     const op = (await query(`SELECT * FROM operadores WHERE id = ? AND activo = 1`, [req.body?.operador_id]))[0];
     if (!op) return errj(res, 400, 'Seleccioná un operador activo.');
 
@@ -936,6 +986,189 @@ app.put('/api/turnos/:id/cancelar', requiere(), async (req, res, next) => {
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
+
+/* ============================================================
+   DASHBOARD (coordinador / admin)
+   ============================================================ */
+
+app.get('/api/dashboard', requiere('coordinador', 'admin'), async (req, res, next) => {
+  try {
+    await barrerAutoAbastecido();
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha || '') ? req.query.fecha : hoyBuenosAires();
+
+    const porEstado = await query(
+      `SELECT estado, COUNT(*) AS cantidad, COALESCE(SUM(volumen),0) AS litros
+         FROM turnos WHERE fecha = ? GROUP BY estado`, [fecha]);
+    const porGrado = await query(
+      `SELECT grado, COUNT(*) AS cantidad, COALESCE(SUM(volumen),0) AS litros
+         FROM turnos WHERE fecha = ? AND estado != 'CANCELADO' GROUP BY grado`, [fecha]);
+    const porAbastecedora = await query(
+      `SELECT t.abastecedora AS id, COUNT(*) AS turnos, COALESCE(SUM(t.volumen),0) AS litros
+         FROM turnos t WHERE t.fecha = ? AND t.abastecedora IS NOT NULL AND t.estado != 'CANCELADO'
+        GROUP BY t.abastecedora ORDER BY litros DESC`, [fecha]);
+    const porCliente = await query(
+      `SELECT c.nombre AS cliente, COUNT(*) AS turnos, COALESCE(SUM(t.volumen),0) AS litros
+         FROM turnos t JOIN clientes c ON c.id = t.cliente_id
+        WHERE t.fecha = ? AND t.estado != 'CANCELADO'
+        GROUP BY c.nombre ORDER BY litros DESC LIMIT 8`, [fecha]);
+    const proximos = await query(
+      `SELECT t.codigo, t.hora, t.matricula, t.grado, t.volumen, t.estado, t.abastecedora,
+              t.sobreturno, c.nombre AS cliente
+         FROM turnos t JOIN clientes c ON c.id = t.cliente_id
+        WHERE t.fecha = ? AND t.estado IN ${ESTADOS_RESERVAN}
+        ORDER BY t.hora LIMIT 12`, [fecha]);
+
+    /* ocupación de la grilla del día (sin contar sobreturnos) */
+    const { slots, capacidad } = await generarSlots();
+    const reservados = Number((await query(
+      `SELECT COUNT(*) AS n FROM turnos
+        WHERE fecha = ? AND sobreturno = 0 AND estado IN ${ESTADOS_RESERVAN}`, [fecha]))[0].n);
+    const sobreturnos = Number((await query(
+      `SELECT COUNT(*) AS n FROM turnos WHERE fecha = ? AND sobreturno = 1 AND estado != 'CANCELADO'`,
+      [fecha]))[0].n);
+
+    const flota = await query(
+      `SELECT grado, COUNT(*) AS total, SUM(CASE WHEN activa = 1 THEN 1 ELSE 0 END) AS operativas
+         FROM abastecedoras GROUP BY grado`);
+
+    res.json({
+      fecha,
+      por_estado: porEstado, por_grado: porGrado,
+      por_abastecedora: porAbastecedora, por_cliente: porCliente,
+      proximos, flota, sobreturnos,
+      grilla: { slots: slots.length, capacidad, cupos: slots.length * capacidad, reservados },
+    });
+  } catch (e) { next(e); }
+});
+
+/* ============================================================
+   API KEYS (gestión desde el rol admin)
+   ============================================================ */
+
+app.get('/api/apikeys', requiere('admin'), async (req, res, next) => {
+  try { res.json(await listarApiKeys()); } catch (e) { next(e); }
+});
+
+app.post('/api/apikeys', requiere('admin'), async (req, res, next) => {
+  try {
+    const nombre = String(req.body?.nombre || '').trim();
+    if (!nombre) return errj(res, 400, 'Poné un nombre que identifique para qué se usa la clave.');
+    const clave = await crearApiKey(nombre, req.usuario.id);
+    /* Única vez que la clave viaja en claro. */
+    res.json({ ok: true, clave });
+  } catch (e) { next(e); }
+});
+
+app.put('/api/apikeys/:id/revocar', requiere('admin'), async (req, res, next) => {
+  try { await revocarApiKey(req.params.id); res.json({ ok: true }); } catch (e) { next(e); }
+});
+
+app.delete('/api/apikeys/:id', requiere('admin'), async (req, res, next) => {
+  try { await eliminarApiKey(req.params.id); res.json({ ok: true }); } catch (e) { next(e); }
+});
+
+/* ============================================================
+   API v1 — consulta de solo lectura autenticada con app key
+   Header:  X-API-Key: sf_live_…   (o Authorization: Bearer …)
+   ============================================================ */
+
+const v1 = express.Router();
+v1.use(autenticarApiKey);
+
+const limitar = (req, max = 500) => Math.min(Number(req.query.limit) || max, 2000);
+
+v1.get('/', (req, res) => {
+  res.json({
+    servicio: 'Turnos Aeroplanta San Fernando — API de consulta',
+    version: 1,
+    solo_lectura: true,
+    endpoints: [
+      'GET /api/v1/turnos?desde=&hasta=&estado=&cliente=&matricula=&limit=',
+      'GET /api/v1/clientes',
+      'GET /api/v1/aeronaves?cliente=&grado=',
+      'GET /api/v1/abastecedoras',
+      'GET /api/v1/hangares',
+      'GET /api/v1/resumen?desde=&hasta=',
+    ],
+  });
+});
+
+v1.get('/turnos', async (req, res, next) => {
+  try {
+    const cond = [], args = [];
+    if (req.query.desde) { cond.push('t.fecha >= ?'); args.push(String(req.query.desde)); }
+    if (req.query.hasta) { cond.push('t.fecha <= ?'); args.push(String(req.query.hasta)); }
+    if (req.query.estado) { cond.push('t.estado = ?'); args.push(String(req.query.estado).toUpperCase()); }
+    if (req.query.matricula) { cond.push('t.matricula = ?'); args.push(normMat(req.query.matricula)); }
+    if (req.query.cliente) { cond.push('lower(c.nombre) LIKE ?'); args.push(`%${String(req.query.cliente).toLowerCase()}%`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    const filas = await query(
+      `SELECT t.codigo, t.fecha, t.hora, t.matricula, t.tipo_aeronave, t.grado, t.volumen,
+              t.forma_pago, t.hangar, t.estado, t.abastecedora, o.nombre AS operador,
+              t.sobreturno, t.origen, t.motivo, t.comentario_coordinador, t.motivo_cancelacion,
+              c.nombre AS cliente, t.creado
+         FROM turnos t
+         JOIN clientes c ON c.id = t.cliente_id
+         LEFT JOIN operadores o ON o.id = t.operador_id
+        ${where} ORDER BY t.fecha DESC, t.hora DESC LIMIT ${limitar(req)}`, args);
+    res.json({ total: filas.length, turnos: filas });
+  } catch (e) { next(e); }
+});
+
+v1.get('/clientes', async (req, res, next) => {
+  try {
+    res.json(await query(
+      `SELECT c.nombre, c.activo, c.creado,
+              (SELECT COUNT(*) FROM aeronaves a WHERE a.cliente_id = c.id) AS aeronaves,
+              (SELECT COUNT(*) FROM turnos t WHERE t.cliente_id = c.id) AS turnos
+         FROM clientes c ORDER BY c.nombre`));
+  } catch (e) { next(e); }
+});
+
+v1.get('/aeronaves', async (req, res, next) => {
+  try {
+    const cond = [], args = [];
+    if (req.query.grado) { cond.push('a.grado = ?'); args.push(String(req.query.grado)); }
+    if (req.query.cliente) { cond.push('lower(c.nombre) LIKE ?'); args.push(`%${String(req.query.cliente).toLowerCase()}%`); }
+    const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+    res.json(await query(
+      `SELECT a.matricula, a.tipo, a.motor, a.grado, a.excepcion_grado, a.hangar,
+              a.capacidad, a.activa, c.nombre AS cliente
+         FROM aeronaves a JOIN clientes c ON c.id = a.cliente_id
+        ${where} ORDER BY a.matricula LIMIT ${limitar(req)}`, args));
+  } catch (e) { next(e); }
+});
+
+v1.get('/abastecedoras', async (req, res, next) => {
+  try { res.json(await query(`SELECT id, nombre, grado, capacidad, activa FROM abastecedoras ORDER BY id`)); }
+  catch (e) { next(e); }
+});
+
+v1.get('/hangares', async (req, res, next) => {
+  try { res.json(await query(`SELECT codigo, nombre, activo FROM hangares ORDER BY rowid`)); }
+  catch (e) { next(e); }
+});
+
+v1.get('/resumen', async (req, res, next) => {
+  try {
+    const desde = String(req.query.desde || hoyBuenosAires());
+    const hasta = String(req.query.hasta || desde);
+    const porEstado = await query(
+      `SELECT estado, COUNT(*) AS cantidad, COALESCE(SUM(volumen),0) AS litros
+         FROM turnos WHERE fecha BETWEEN ? AND ? GROUP BY estado`, [desde, hasta]);
+    const porGrado = await query(
+      `SELECT grado, COUNT(*) AS cantidad, COALESCE(SUM(volumen),0) AS litros
+         FROM turnos WHERE fecha BETWEEN ? AND ? AND estado != 'CANCELADO' GROUP BY grado`, [desde, hasta]);
+    const porCliente = await query(
+      `SELECT c.nombre AS cliente, COUNT(*) AS turnos, COALESCE(SUM(t.volumen),0) AS litros
+         FROM turnos t JOIN clientes c ON c.id = t.cliente_id
+        WHERE t.fecha BETWEEN ? AND ? AND t.estado != 'CANCELADO'
+        GROUP BY c.nombre ORDER BY litros DESC LIMIT 20`, [desde, hasta]);
+    res.json({ desde, hasta, por_estado: porEstado, por_grado: porGrado, por_cliente: porCliente });
+  } catch (e) { next(e); }
+});
+
+app.use('/api/v1', v1);
 
 /* ============================================================
    NOTIFICACIONES (feedback al cliente dentro de la app)
