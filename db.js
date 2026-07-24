@@ -102,9 +102,8 @@ const SCHEMA = [
      id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL,
      turno_codigo TEXT, mensaje TEXT NOT NULL,
      leida INTEGER NOT NULL DEFAULT 0, creada TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS usuario_aeronaves (
-     usuario_id TEXT NOT NULL, matricula TEXT NOT NULL,
-     PRIMARY KEY (usuario_id, matricula))`
+  `CREATE TABLE IF NOT EXISTS maestro_matriculas (
+     matricula TEXT PRIMARY KEY, grado_esperado TEXT NOT NULL CHECK (grado_esperado IN ('JET A-1','AVGAS 100LL')))`
 ];
 
 const CONFIG_DEFAULT = {
@@ -133,6 +132,7 @@ async function seed(hashPassword) {
     ['H8', 'PACIFIC OCEAN'], ['H9', 'GLOBAL OIL'], ['H10', 'AEROMECANICA'],
     ['H11', 'AVIONES PRIVADOS'], ['H12', 'SUNDOWNJET'], ['H13', 'AERORUTAS NUEVO'],
     ['H14', 'NB'], ['PP', 'PLATAFORMA PRINCIPAL'], ['PN', 'PLATAFORMA NORTE'],
+    ['PLAT_YPF', 'Plataforma YPF (Surtidor)']
   ];
   for (const [c, n] of HANGARES) {
     await query(`INSERT INTO hangares (codigo, nombre) VALUES (?, ?)`, [c, n]);
@@ -142,6 +142,8 @@ async function seed(hashPassword) {
     ['AB-01', 'Abastecedora 01', 'JET A-1', 10000],
     ['AB-02', 'Abastecedora 02', 'JET A-1', 5000],
     ['AB-03', 'Abastecedora 03', 'AVGAS 100LL', 3000],
+    ['SURT-JET', 'Surtidor JET A-1', 'JET A-1', 999999],
+    ['SURT-AVG', 'Surtidor AVGAS', 'AVGAS 100LL', 999999]
   ]) {
     await query(`INSERT INTO abastecedoras (id, nombre, grado, capacidad) VALUES (?, ?, ?, ?)`,
       [id, nombre, grado, cap]);

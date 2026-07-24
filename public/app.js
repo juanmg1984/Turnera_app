@@ -369,57 +369,26 @@ async function pasoAeronave() {
   }
 
   const tarjetas = aeronaves.map(a => `
-    <div class="card-aeronave" style="position:relative;cursor:pointer;${W.aeronave?.matricula === a.matricula ? 'border-color:var(--azul);background:var(--azul-suave)' : ''}"
+    <div class="card-aeronave" style="cursor:pointer;${W.aeronave?.matricula === a.matricula ? 'border-color:var(--azul);background:var(--azul-suave)' : ''}"
          onclick="elegirAeronave('${esc(a.matricula)}')">
-      <button class="btn btn-rojo btn-chico" style="position:absolute;top:10px;right:10px;padding:2px 6px" onclick="event.stopPropagation();desvincularAeronave('${esc(a.matricula)}')">Desvincular</button>
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-right:80px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div>
-          <div class="mat">✈️ ${esc(a.matricula)}</div>
-          <div class="dato">${esc(a.tipo)} • Motor: ${MOTORES[a.motor].nombre}</div>
-          <div class="dato">Capacidad: ${a.capacidad} L ${a.excepcion_grado ? '• ⚠️ excepción de grado autorizada' : ''}</div>
+          <div class="mat">✈ ${esc(a.matricula)}</div>
+          <div class="dato">${esc(a.tipo)} · Motor: ${MOTORES[a.motor].nombre}</div>
+          <div class="dato">Capacidad: ${a.capacidad} L ${a.excepcion_grado ? '· ⚠ excepción de grado autorizada' : ''}</div>
         </div>
         ${badgeGrado(a.grado, true)}
       </div>
     </div>`).join('');
 
   return `<h3 style="margin-bottom:4px">Elegí la aeronave a abastecer:</h3>
-    <p class="subtitulo">Solo ves las matrículas que tienes vinculadas a tu cuenta. Puedes vincular más matrículas si las gestionas.</p>
-    ${tarjetas || '<p class="subtitulo">Todavía no tienes aeronaves vinculadas.</p>'}
-    
-    <div style="margin:20px 0;padding:15px;background:#f9f9f9;border:1px solid #ddd;border-radius:8px">
-      <h4 style="margin:0 0 10px 0">Vincular aeronave existente</h4>
-      <div style="display:flex;gap:10px;align-items:center">
-        <input type="text" id="vincular-mat" placeholder="Matrícula (ej. LV-XYZ)" style="text-transform:uppercase;flex:1;max-width:200px">
-        <button class="btn btn-verde" onclick="vincularAeronave()">Vincular</button>
-      </div>
-    </div>
-
+    <p class="subtitulo">Solo ves las matrículas asociadas a ${esc(USER.clienteNombre || 'tu cliente')}. El grado de combustible está <strong>bloqueado</strong> por el maestro; solo el administrador de la planta puede cambiarlo.</p>
+    ${tarjetas || '<p class="subtitulo">Todavía no tenés aeronaves registradas.</p>'}
     <div class="botonera">
-      <button class="btn btn-secundario" onclick="W.esNueva=true; render()">+ Registrar aeronave nueva</button>
-      <button class="btn btn-verde" onclick="wizardPaso(2)" ${!W.aeronave ? 'disabled' : ''}>Continuar</button>
+      <button class="btn btn-verde" ${W.aeronave ? '' : 'disabled'} onclick="wizardPaso(2)">
+        Continuar${W.aeronave ? ` con ${esc(W.aeronave.matricula)}` : ''}</button>
+      <button class="btn btn-gris" onclick="W.esNueva=true;render()">➕ Primera carga: registrar aeronave nueva</button>
     </div>`;
-}
-
-async function vincularAeronave() {
-  const mat = document.getElementById('vincular-mat').value.trim();
-  if (!mat) return;
-  try {
-    await api('/api/usuario_aeronaves', 'POST', { matricula: mat });
-    render();
-  } catch (e) {
-    errorModal(e);
-  }
-}
-
-async function desvincularAeronave(mat) {
-  if (!confirm(`¿Estás seguro de desvincular la matrícula ${mat}?`)) return;
-  try {
-    await api(`/api/usuario_aeronaves/${encodeURIComponent(mat)}`, 'DELETE');
-    if (W.aeronave?.matricula === mat) W.aeronave = null;
-    render();
-  } catch (e) {
-    errorModal(e);
-  }
 }
 
 function elegirAeronave(mat) {
@@ -547,7 +516,7 @@ function bloqueVerificacion() {
   if (v.formato_valido === false) {
     return `<div class="alerta roja">✋ ${esc(v.error_formato)}</div>`;
   }
-  let html = `<div class="alerta verde" style="margin-top:0">🔎 Matrícula normalizada: <strong style="font-size:16px">${esc(v.matricula)}</strong> · ${esc(v.pais)}</div>`;
+  let html = `<div class="alerta verde" style="margin-top:0">🔎 Matrícula normalizada: <strong style="font-size:16px">${esc(v.matricula)}</strong></div>`;
   if (v.ya_registrada) {
     html += `<div class="alerta roja">🚫 <strong>${esc(v.matricula)} ya está registrada</strong>${v.propia ? ' en tu cuenta: seleccionala de la lista en lugar de darla de alta de nuevo.' : ' en otro cliente del maestro (las matrículas son únicas). Si es tu aeronave, contactá al coordinador de planta.'}</div>`;
   }
@@ -555,18 +524,11 @@ function bloqueVerificacion() {
     html += `<div class="alerta amarilla">⚠ <strong>Matrículas parecidas ya registradas:</strong> ${v.parecidas.map(esc).join(', ')}. Verificá que no sea un error de tipeo.</div>`;
   }
   const r = v.verificacion;
-  if (r === null) {
-    html += `<div class="alerta azul">ℹ El servicio externo de verificación no está disponible en este momento: se validó solo el formato. Confirmá los datos con la documentación de la aeronave.</div>`;
-  } else if (r.encontrada) {
-    const contraMotor = r.sugerencia_motor && W.nueva.motor && r.sugerencia_motor !== W.nueva.motor;
-    html += `<div class="alerta verde">✔ <strong>Encontrada en el registro público ADS-B:</strong>
-      ${esc(r.fabricante || '')} ${esc(r.tipo || '')}${r.operador ? ` · Operador: ${esc(r.operador)}` : ''}${r.pais ? ` · ${esc(r.pais)}` : ''}.
-      Verificá que coincida con tu aeronave.</div>`;
-    if (contraMotor) {
-      html += `<div class="alerta roja">🚨 <strong>ALERTA ANTI-MISFUELLING:</strong> según el registro externo, ${esc(v.matricula)} es un <strong>${esc(r.tipo)}</strong>, que corresponde a motor <strong>${r.sugerencia_motor === 'TURBINA' ? 'de turbina (JET A-1)' : 'a pistón (AVGAS 100LL)'}</strong>, pero seleccionaste "${MOTORES[W.nueva.motor].nombre}". Revisá el tipo de motor antes de continuar.</div>`;
+  if (r && r.encontrada) {
+    const contraGrado = W.nueva.grado && r.grado_esperado !== W.nueva.grado;
+    if (contraGrado) {
+      html += `<div class="alerta roja">🚨 <strong>ALERTA ANTI-MISFUELLING:</strong> según el maestro interno, ${esc(v.matricula)} consume <strong>${esc(r.grado_esperado)}</strong>, pero seleccionaste "${esc(W.nueva.grado)}". Revisá el grado antes de continuar.</div>`;
     }
-  } else {
-    html += `<div class="alerta azul">ℹ No figura en la base pública ADS-B (habitual en aviación general sin transpondedor Mode-S). Esto <strong>no invalida</strong> la matrícula: verificá los datos contra la documentación de la aeronave.</div>`;
   }
   return html;
 }
@@ -578,9 +540,6 @@ async function verificarMatriculaUI() {
     W.verif = await api(`/api/aeronaves/verificar/${encodeURIComponent(valor.trim())}`);
     if (W.verif.formato_valido) {
       W.nueva.matricula = W.verif.matricula;
-      if (W.verif.verificacion?.encontrada && !W.nueva.tipo) {
-        W.nueva.tipo = `${W.verif.verificacion.fabricante || ''} ${W.verif.verificacion.tipo || ''}`.trim();
-      }
     }
   } catch { W.verif = null; }
   render();
@@ -667,7 +626,7 @@ async function pasoDatos() {
         <select onchange="W.hangar=this.value;render()">${hangares}</select>
         <span class="icono-estado"></span>
       </div>
-      ${W.hangar === 'PLAT_YPF' ? `<div class="alerta azul" style="margin-top:8px">?? <strong>Plataforma YPF (Surtidor)</strong>: Deberás llevar la aeronave a la plataforma. El turno se autoasignará y confirmará inmediatamente al finalizar.</div>` : ''}
+      ${W.hangar === 'PLAT_YPF' ? `<div class="alerta azul" style="margin-top:8px">🚨 <strong>Plataforma YPF (Surtidor)</strong>: Deberás llevar la aeronave a la plataforma. El turno se autoasignará y confirmará inmediatamente al finalizar.</div>` : ''}
     </div>
     <div class="fila-form">
       <label>Motivo:<small>Comentario adicional que quiera agregar al turno</small></label>
@@ -2057,7 +2016,6 @@ async function renderCalendarioMensual() {
     const pasado = fecha < hoyStr;
     const act = fecha === FILTRO_FECHA;
     const d = data[fecha] || { total: 0, pendientes: 0, programados: 0 };
-    if (dia === 24) console.log("DEBUG CALENDARIO - fecha:", fecha, "data[fecha]:", data[fecha], "data entera:", data);
     
     html += `<div class="calendario-dia ${act ? "activo" : ""} ${pasado ? "pasado" : ""}" onclick="FILTRO_FECHA='${fecha}'; irA('agenda');" ${pasado ? 'style="opacity:0.5;background:#f9f9f9;"' : ''}>
       <div class="cal-num">${dia} ${hoy ? "<span style='color:var(--azul);font-size:10px'>(Hoy)</span>" : ""}</div>`;

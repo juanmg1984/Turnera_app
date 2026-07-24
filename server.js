@@ -600,14 +600,11 @@ app.get('/api/aeronaves', requiere(), async (req, res, next) => {
   try {
     if (req.usuario.rol === 'cliente') {
       return res.json(await query(
-        `SELECT a.*, c.nombre AS cliente 
-         FROM aeronaves a 
-         LEFT JOIN clientes c ON c.id = a.cliente_id
-         JOIN usuario_aeronaves ua ON ua.matricula = a.matricula
-         WHERE ua.usuario_id = ? AND a.activa = 1 ORDER BY a.matricula`, [req.usuario.id]));
+        `SELECT a.*, c.nombre AS cliente FROM aeronaves a JOIN clientes c ON c.id = a.cliente_id
+          WHERE a.cliente_id = ? AND a.activa = 1 ORDER BY a.matricula`, [req.usuario.cliente_id]));
     }
     res.json(await query(
-      `SELECT a.*, c.nombre AS cliente FROM aeronaves a LEFT JOIN clientes c ON c.id = a.cliente_id
+      `SELECT a.*, c.nombre AS cliente FROM aeronaves a JOIN clientes c ON c.id = a.cliente_id
         ORDER BY a.matricula`));
   } catch (e) { next(e); }
 });
@@ -708,33 +705,9 @@ app.post('/api/aeronaves', requiere(), async (req, res, next) => {
       `INSERT INTO aeronaves (matricula, tipo, motor, grado, excepcion_grado, cliente_id, hangar, capacidad, creado)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [v.matricula, String(b.tipo).trim(), b.motor, b.grado, v.excepcion ? 1 : 0, clienteId, b.hangar, Number(b.capacidad), new Date().toISOString()]);
-    
-    if (req.usuario.rol === 'cliente') {
-      await query(`INSERT OR IGNORE INTO usuario_aeronaves (usuario_id, matricula) VALUES (?, ?)`, [req.usuario.id, v.matricula]);
-    }
-
     const parecidas = (await query(`SELECT matricula FROM aeronaves WHERE matricula != ?`, [v.matricula]))
       .map(r => r.matricula).filter(m => levenshtein(m, v.matricula) <= 1);
     res.json({ ok: true, matricula: v.matricula, parecidas });
-  } catch (e) { next(e); }
-});
-
-app.post('/api/usuario_aeronaves', requiere('cliente'), async (req, res, next) => {
-  try {
-    const matricula = normMat(req.body?.matricula || '');
-    if (!matricula) return errj(res, 400, 'Matrícula inválida.');
-    const a = (await query(`SELECT matricula FROM aeronaves WHERE matricula = ? AND activa = 1`, [matricula]))[0];
-    if (!a) return errj(res, 404, 'La aeronave no existe o está inactiva.');
-    await query(`INSERT OR IGNORE INTO usuario_aeronaves (usuario_id, matricula) VALUES (?, ?)`, [req.usuario.id, matricula]);
-    res.json({ ok: true });
-  } catch (e) { next(e); }
-});
-
-app.delete('/api/usuario_aeronaves/:matricula', requiere('cliente'), async (req, res, next) => {
-  try {
-    const matricula = normMat(req.params.matricula);
-    await query(`DELETE FROM usuario_aeronaves WHERE usuario_id = ? AND matricula = ?`, [req.usuario.id, matricula]);
-    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -1025,12 +998,9 @@ app.post('/api/turnos', requiere(), async (req, res, next) => {
 
     const esStaff = req.usuario.rol === 'coordinador' || req.usuario.rol === 'admin';
 
-    /* Validar que la aeronave pertenece al cliente o está vinculada a su cuenta */
+    /* El cliente solo puede pedir turnos para SUS matrículas */
     if (!esStaff && a.cliente_id !== req.usuario.cliente_id) {
-      const vinculada = (await query(`SELECT 1 FROM usuario_aeronaves WHERE usuario_id = ? AND matricula = ?`, [req.usuario.id, matricula]))[0];
-      if (!vinculada) {
-        return errj(res, 403, `La matrícula ${matricula} no está vinculada a tu cuenta. Primero vinculala desde "Pedir turno".`);
-      }
+      return errj(res, 403, `La matrícula ${matricula} no pertenece a tu cuenta. Solo podés pedir turnos para las aeronaves de tu cliente.`);
     }
 
     /* Sobreturno: solo el staff, para atender pedidos por teléfono/mostrador
@@ -1057,35 +1027,16 @@ app.post('/api/turnos', requiere(), async (req, res, next) => {
       return errj(res, 400, `Confirmación positiva fallida: escribí la matrícula ${matricula} (con o sin guión) para confirmar el turno.`);
     }
 
-    let estadoFinal = esSobreturno ? 'PROGRAMADO' : 'PENDIENTE';
-    let abastecedoraId = null;
-
-    if (b.hangar === 'PLAT_YPF') {
-      abastecedoraId = a.grado === 'JET A-1' ? 'SURT-JET' : 'SURT-AVG';
-      const ocupada = await query(
-        `SELECT codigo FROM turnos WHERE abastecedora = ? AND fecha = ? AND hora = ? AND estado = 'PROGRAMADO'`,
-        [abastecedoraId, b.fecha, b.hora]);
-      if (ocupada.length) {
-        return errj(res, 409, `El Surtidor de la Plataforma YPF ya está ocupado en ese horario (turno ${ocupada[0].codigo}). Elegí otro horario.`);
-      }
-      estadoFinal = 'PROGRAMADO';
-    }
-
     const cnt = await query(`SELECT COUNT(*) AS n FROM turnos`);
     const codigo = `T-${String(Number(cnt[0].n) + 1).padStart(4, '0')}`;
     await query(
       `INSERT INTO turnos (id, codigo, fecha, hora, matricula, tipo_aeronave, grado, volumen, forma_pago,
-                           cuenta_corriente, hangar, motivo, estado, sobreturno, origen, cliente_id, creado_por, creado, abastecedora)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                           cuenta_corriente, hangar, motivo, estado, sobreturno, origen, cliente_id, creado_por, creado)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?, ?, ?)`,
       [uuid(), codigo, b.fecha, b.hora, matricula, a.tipo, a.grado, Number(b.volumen), b.forma_pago,
        b.forma_pago === 'CUENTA CORRIENTE' ? cuenta : '',
-       b.hangar, String(b.motivo || '').trim(), estadoFinal, esSobreturno ? 1 : 0, esStaff ? 'MANUAL' : 'CLIENTE',
-       a.cliente_id, req.usuario.id, new Date().toISOString(), abastecedoraId]);
-    
-    if (abastecedoraId) {
-      await notificar(a.cliente_id, codigo,
-        `El turno ${codigo} (${matricula} / ${a.grado}) para el ${b.fecha} ${b.hora} hs ha sido autoasignado a Plataforma YPF.`);
-    }
+       b.hangar, String(b.motivo || '').trim(), esSobreturno ? 1 : 0, esStaff ? 'MANUAL' : 'CLIENTE',
+       a.cliente_id, req.usuario.id, new Date().toISOString()]);
     res.json({ ok: true, codigo, grado: a.grado, sobreturno: esSobreturno });
   } catch (e) { next(e); }
 });
