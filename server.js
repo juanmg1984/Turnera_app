@@ -14,8 +14,9 @@ const {
 } = require('./auth');
 const {
   enviarMail, mailConfigurado, mailBienvenida, mailRecuperacion,
-  mailPasswordRestablecida, mailTurnoAsignado,
+  mailPasswordRestablecida, mailTurnoAsignado, mailTurnoCancelado, mailTurnoReprogramado,
 } = require('./mailer');
+const { enviarMensajeWhatsApp } = require('./whatsapp');
 const { randomBytes } = require('node:crypto');
 const {
   crearApiKey, listarApiKeys, revocarApiKey, eliminarApiKey, autenticarApiKey,
@@ -832,18 +833,28 @@ app.get('/api/turnos/slots', requiere(), async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-/* Cierre de día: los turnos PROGRAMADO de fechas pasadas que el coordinador
-   no gestionó se asumen ABASTECIDOS (regla operativa de la planta). */
+/* Cierre: los turnos PROGRAMADO que hayan superado las 24hs desde su hora de inicio
+   y no hayan sido gestionados, se asumen ABASTECIDOS (regla operativa). */
 async function barrerAutoAbastecido() {
-  const hoy = hoyBuenosAires();
   const pendientes = await query(
-    `SELECT id, comentario_coordinador FROM turnos WHERE estado = 'PROGRAMADO' AND fecha < ?`, [hoy]);
+    `SELECT id, fecha, hora, comentario_coordinador FROM turnos WHERE estado = 'PROGRAMADO'`);
+  const ahora = Date.now();
+  let procesados = 0;
   for (const t of pendientes) {
-    const nota = (t.comentario_coordinador ? t.comentario_coordinador + ' · ' : '') +
-      'Abastecimiento asumido automáticamente (cierre de día sin gestión).';
-    await query(`UPDATE turnos SET estado = 'ABASTECIDO', comentario_coordinador = ? WHERE id = ?`, [nota, t.id]);
+    const [y, m, d] = t.fecha.split('-').map(Number);
+    const [H, M] = t.hora.split(':').map(Number);
+    // Usamos new Date() asumiendo que el server corre en la zona horaria correcta
+    const dtTurno = new Date(y, m - 1, d, H, M).getTime();
+    const ms24h = 24 * 60 * 60 * 1000;
+    
+    if (ahora > dtTurno + ms24h) {
+      const nota = (t.comentario_coordinador ? t.comentario_coordinador + ' · ' : '') +
+        'Abastecimiento asumido automáticamente (pasaron 24hs sin gestión).';
+      await query(`UPDATE turnos SET estado = 'ABASTECIDO', comentario_coordinador = ? WHERE id = ?`, [nota, t.id]);
+      procesados++;
+    }
   }
-  return pendientes.length;
+  return procesados;
 }
 
 app.get('/api/turnos', requiere(), async (req, res, next) => {
@@ -1033,7 +1044,19 @@ app.put('/api/turnos/:id/reprogramar', requiere('coordinador', 'admin'), async (
       [fecha, hora, String(comentario).trim(), t.id]);
     await notificar(t.cliente_id, t.codigo,
       `🕐 Tu turno ${t.codigo} (${t.matricula}) fue reprogramado: de ${anterior} a ${fecha} ${hora} hs. Comentario del coordinador: "${String(comentario).trim()}"`);
-    res.json({ ok: true });
+    
+    const destinatarios = await query(`SELECT email FROM usuarios WHERE cliente_id = ? AND activo = 1`, [t.cliente_id]);
+    let mailEnviado = false;
+    // Asumimos que los teléfonos están en un campo si se agregara, por ahora solo stub whatsapp:
+    await enviarMensajeWhatsApp('5491100000000', `Tu turno ${t.codigo} fue reprogramado a ${fecha} ${hora}.`);
+    
+    const turnoActualizado = await turnoPorId(t.id);
+    for (const d of destinatarios) {
+      const r = await enviarMail(d.email, `Turno ${t.codigo} reprogramado`, mailTurnoReprogramado(turnoActualizado, anterior, comentario, APP_URL));
+      mailEnviado = mailEnviado || r.enviado;
+    }
+    
+    res.json({ ok: true, mail_enviado: mailEnviado });
   } catch (e) { next(e); }
 });
 
@@ -1080,8 +1103,21 @@ app.put('/api/turnos/:id/cancelar', requiere(), async (req, res, next) => {
     if (!esCliente) {
       await notificar(t.cliente_id, t.codigo,
         `❌ Tu turno ${t.codigo} (${t.fecha} ${t.hora}, ${t.matricula}) fue cancelado por la planta. Motivo: "${motivo}"`);
+    } else {
+      await notificar(t.cliente_id, t.codigo,
+        `❌ Cancelaste tu turno ${t.codigo} (${t.fecha} ${t.hora}, ${t.matricula}). Motivo: "${motivo}"`);
     }
-    res.json({ ok: true });
+
+    const destinatarios = await query(`SELECT email FROM usuarios WHERE cliente_id = ? AND activo = 1`, [t.cliente_id]);
+    let mailEnviado = false;
+    await enviarMensajeWhatsApp('5491100000000', `Tu turno ${t.codigo} fue cancelado. Motivo: ${motivo}`);
+    
+    for (const d of destinatarios) {
+      const r = await enviarMail(d.email, `Turno ${t.codigo} cancelado`, mailTurnoCancelado(t, motivo, APP_URL));
+      mailEnviado = mailEnviado || r.enviado;
+    }
+
+    res.json({ ok: true, mail_enviado: mailEnviado });
   } catch (e) { next(e); }
 });
 

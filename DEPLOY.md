@@ -105,6 +105,13 @@ así que los deploys no borran nada.
 ## Alternativas si algún día hace falta más
 
 - **Que no se duerma el server:** plan Starter de Render (pago) o un ping periódico externo.
-- **Mails automáticos al cliente:** hoy el aviso es dentro de la app (campanita); se puede
-  sumar email con [Resend](https://resend.com) (plan gratuito) más adelante.
 - **Login con Google:** se puede agregar sobre el login actual sin migrar usuarios.
+
+## Entornos Dev, Test y Prod
+
+El repositorio tiene flujos de GitHub Actions listos en `.github/workflows/` para las ramas `dev`, `test` y `main`.
+Para implementarlos:
+
+1. **Turso**: Crea 3 bases de datos distintas (ej. `turnera-dev`, `turnera-test`, `turnera-prod`).
+2. **Render**: Crea 3 Web Services (conectados al mismo repo, pero apuntando a `dev`, `test` y `main` respectivamente).
+3. **Variables**: Configura en cada Web Service de Render sus variables de entorno (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`) correspondientes a la base de datos de su entorno. Render hará deploy automáticamente al hacer un `git push` a las respectivas ramas.

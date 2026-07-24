@@ -852,8 +852,25 @@ async function renderAgenda() {
     </div>
     <div class="resultado-turno">
       <span class="etiqueta">Resultado del turno:</span>
-      <button class="btn-resultado abastecido" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','ABASTECIDO')">✅ Abastecido</button>
-      <button class="btn-resultado ausente" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','AUSENTE')">🚫 No se presentó</button>
+      ${(() => {
+        const [y, m, d] = t.fecha.split('-').map(Number);
+        const [H, M] = t.hora.split(':').map(Number);
+        // Construir la fecha del turno asumiendo la zona horaria local o la de Buenos Aires
+        const dtTurno = new Date(y, m - 1, d, H, M).getTime();
+        const ahora = Date.now();
+        const ms24h = 24 * 60 * 60 * 1000;
+        
+        if (ahora < dtTurno) {
+          return '<span style="color:var(--texto-suave);font-size:13px">Habilitado desde la hora del turno.</span>';
+        } else if (ahora > dtTurno + ms24h) {
+          return '<span style="color:var(--texto-suave);font-size:13px">Plazo finalizado (fijo).</span>';
+        } else {
+          return `
+            <button class="btn-resultado abastecido" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','ABASTECIDO')">✅ Abastecido</button>
+            <button class="btn-resultado ausente" onclick="confirmarAbastecimiento('${t.id}','${t.codigo}','AUSENTE')">🚫 No se presentó</button>
+          `;
+        }
+      })()}
     </div>
     <div class="acciones">
       <button class="btn btn-gris btn-chico" onclick="abrirReprogramar('${t.id}','${t.codigo}','${t.fecha}','${t.hora}','${t.grado}')">Cambiar horario</button>

@@ -1,0 +1,17 @@
+name: Deploy to Render (Test)
+on:
+  push:
+    branches:
+      - test
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Si usas Render Auto-Deploy en la rama 'test', Render lo hace automático.
+      # Si prefieres usar un Deploy Hook manual, descomenta esto y agrega el secret en GitHub:
+      # - name: Trigger Render Deploy
+      #   run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_TEST }}

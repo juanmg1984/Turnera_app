@@ -115,9 +115,39 @@ function mailTurnoAsignado(t, abastecedora, operador, appUrl) {
      ${t.comentario_coordinador ? `<p style="margin-top:14px">💬 <em>${t.comentario_coordinador}</em></p>` : ''}
      <p style="margin-top:18px"><a href="${appUrl}" style="background:#0451DD;color:#fff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:700">Ver mis turnos</a></p>
      <p style="color:#6b7280;font-size:12.5px;margin-top:14px">Verificá que el grado indicado coincida con el de tu aeronave antes de la carga.</p>`);
+function mailTurnoCancelado(t, motivo, appUrl) {
+  const fila = (k, v) => `<tr><td style="padding:5px 14px 5px 0;color:#6b7280;white-space:nowrap">${k}</td><td><strong>${v}</strong></td></tr>`;
+  return plantilla(`Turno ${t.codigo} cancelado`,
+    `<p>Tu turno de abastecimiento ha sido <strong>cancelado</strong>.</p>
+     <div style="background:#f3f4f6;color:#374151;padding:14px;margin:14px 0;border-left:4px solid #ef4444;border-radius:2px">
+       <div style="font-weight:700">Motivo de cancelación:</div>
+       <div style="margin-top:4px">${motivo}</div>
+     </div>
+     <table style="border-collapse:collapse;font-size:14px">
+       ${fila('Fecha y hora original:', `${t.fecha} · ${t.hora} hs`)}
+       ${fila('Aeronave:', `${t.matricula} — ${t.tipo_aeronave}`)}
+     </table>
+     <p style="margin-top:18px"><a href="${appUrl}" style="background:#0451DD;color:#fff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:700">Ver mis turnos</a></p>`);
+}
+
+function mailTurnoReprogramado(t, anterior, comentario, appUrl) {
+  const fila = (k, v) => `<tr><td style="padding:5px 14px 5px 0;color:#6b7280;white-space:nowrap">${k}</td><td><strong>${v}</strong></td></tr>`;
+  return plantilla(`Turno ${t.codigo} reprogramado`,
+    `<p>El coordinador ha <strong>reprogramado</strong> tu turno de abastecimiento.</p>
+     <table style="border-collapse:collapse;font-size:14px;margin-top:14px">
+       ${fila('Aeronave:', `${t.matricula} — ${t.tipo_aeronave}`)}
+       ${fila('Horario anterior:', anterior)}
+       ${fila('NUEVO HORARIO:', `<span style="color:#1d4ed8">${t.fecha} · ${t.hora} hs</span>`)}
+     </table>
+     <div style="background:#f0f9ff;color:#0369a1;padding:14px;margin:14px 0;border-left:4px solid #0284c7;border-radius:2px">
+       <div style="font-weight:700">Comentario del coordinador:</div>
+       <div style="margin-top:4px">${comentario}</div>
+     </div>
+     <p style="margin-top:18px"><a href="${appUrl}" style="background:#0451DD;color:#fff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:700">Ver mis turnos</a></p>`);
 }
 
 module.exports = {
   enviarMail, mailConfigurado, mailBienvenida, mailRecuperacion,
-  mailPasswordRestablecida, mailTurnoAsignado,
+  mailPasswordRestablecida, mailTurnoAsignado, mailTurnoCancelado, mailTurnoReprogramado,
 };
+
