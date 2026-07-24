@@ -860,7 +860,7 @@ async function barrerAutoAbastecido() {
 /* Resumen mensual para calendario (coordinador/admin) */
 app.get('/api/debug-turnos', async (req, res, next) => {
   try {
-    const rows = await db.query(`
+    const rows = await query(`
       SELECT fecha, 
              COUNT(*) as total,
              SUM(CASE WHEN estado = 'PENDIENTE' THEN 1 ELSE 0 END) as pendientes,
@@ -881,7 +881,7 @@ app.get('/api/turnos/mensual', requiere('coordinador', 'admin'), async (req, res
     // Traemos todos los turnos del mes usando >= y <= para evitar problemas de LIKE
     const inicio = `${mes}-01`;
     const fin = `${mes}-31`;
-    const rows = await db.query(`
+    const rows = await query(`
       SELECT fecha, estado
       FROM turnos 
       WHERE fecha >= ? AND fecha <= ? 
@@ -901,8 +901,31 @@ app.get('/api/turnos/mensual', requiere('coordinador', 'admin'), async (req, res
       if (est === 'PENDIENTE') resumen[f].pendientes++;
       if (est === 'PROGRAMADO') resumen[f].programados++;
     }
+    console.log("RESUMEN ENVIADO:", resumen);
     res.json(resumen);
   } catch (e) { next(e); }
+});
+
+app.get('/api/debug-cal', async (req, res, next) => {
+  try {
+    const rows = await query(`
+      SELECT fecha, estado
+      FROM turnos 
+      WHERE fecha >= '2026-07-01' AND fecha <= '2026-07-31' 
+        AND estado IN ('PENDIENTE', 'PROGRAMADO', 'ABASTECIDO', 'AUSENTE', 'CANCELADO')
+    `);
+    const resumen = {};
+    for (const r of rows) {
+      const f = r.fecha || r[0];
+      const est = r.estado || r[1];
+      if (!f) continue;
+      if (!resumen[f]) resumen[f] = { total: 0, pendientes: 0, programados: 0 };
+      resumen[f].total++;
+      if (est === 'PENDIENTE') resumen[f].pendientes++;
+      if (est === 'PROGRAMADO') resumen[f].programados++;
+    }
+    res.json(resumen);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/turnos', requiere(), async (req, res, next) => {
