@@ -600,11 +600,14 @@ app.get('/api/aeronaves', requiere(), async (req, res, next) => {
   try {
     if (req.usuario.rol === 'cliente') {
       return res.json(await query(
-        `SELECT a.*, c.nombre AS cliente FROM aeronaves a JOIN clientes c ON c.id = a.cliente_id
-          WHERE a.cliente_id = ? AND a.activa = 1 ORDER BY a.matricula`, [req.usuario.cliente_id]));
+        `SELECT a.*, c.nombre AS cliente 
+         FROM aeronaves a 
+         LEFT JOIN clientes c ON c.id = a.cliente_id
+         JOIN usuario_aeronaves ua ON ua.matricula = a.matricula
+         WHERE ua.usuario_id = ? AND a.activa = 1 ORDER BY a.matricula`, [req.usuario.id]));
     }
     res.json(await query(
-      `SELECT a.*, c.nombre AS cliente FROM aeronaves a JOIN clientes c ON c.id = a.cliente_id
+      `SELECT a.*, c.nombre AS cliente FROM aeronaves a LEFT JOIN clientes c ON c.id = a.cliente_id
         ORDER BY a.matricula`));
   } catch (e) { next(e); }
 });
@@ -705,9 +708,33 @@ app.post('/api/aeronaves', requiere(), async (req, res, next) => {
       `INSERT INTO aeronaves (matricula, tipo, motor, grado, excepcion_grado, cliente_id, hangar, capacidad, creado)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [v.matricula, String(b.tipo).trim(), b.motor, b.grado, v.excepcion ? 1 : 0, clienteId, b.hangar, Number(b.capacidad), new Date().toISOString()]);
+    
+    if (req.usuario.rol === 'cliente') {
+      await query(`INSERT OR IGNORE INTO usuario_aeronaves (usuario_id, matricula) VALUES (?, ?)`, [req.usuario.id, v.matricula]);
+    }
+
     const parecidas = (await query(`SELECT matricula FROM aeronaves WHERE matricula != ?`, [v.matricula]))
       .map(r => r.matricula).filter(m => levenshtein(m, v.matricula) <= 1);
     res.json({ ok: true, matricula: v.matricula, parecidas });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/usuario_aeronaves', requiere('cliente'), async (req, res, next) => {
+  try {
+    const matricula = normMat(req.body?.matricula || '');
+    if (!matricula) return errj(res, 400, 'Matrícula inválida.');
+    const a = (await query(`SELECT matricula FROM aeronaves WHERE matricula = ? AND activa = 1`, [matricula]))[0];
+    if (!a) return errj(res, 404, 'La aeronave no existe o está inactiva.');
+    await query(`INSERT OR IGNORE INTO usuario_aeronaves (usuario_id, matricula) VALUES (?, ?)`, [req.usuario.id, matricula]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+app.delete('/api/usuario_aeronaves/:matricula', requiere('cliente'), async (req, res, next) => {
+  try {
+    const matricula = normMat(req.params.matricula);
+    await query(`DELETE FROM usuario_aeronaves WHERE usuario_id = ? AND matricula = ?`, [req.usuario.id, matricula]);
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -998,9 +1025,12 @@ app.post('/api/turnos', requiere(), async (req, res, next) => {
 
     const esStaff = req.usuario.rol === 'coordinador' || req.usuario.rol === 'admin';
 
-    /* El cliente solo puede pedir turnos para SUS matrículas */
+    /* Validar que la aeronave pertenece al cliente o está vinculada a su cuenta */
     if (!esStaff && a.cliente_id !== req.usuario.cliente_id) {
-      return errj(res, 403, `La matrícula ${matricula} no pertenece a tu cuenta. Solo podés pedir turnos para las aeronaves de tu cliente.`);
+      const vinculada = (await query(`SELECT 1 FROM usuario_aeronaves WHERE usuario_id = ? AND matricula = ?`, [req.usuario.id, matricula]))[0];
+      if (!vinculada) {
+        return errj(res, 403, `La matrícula ${matricula} no está vinculada a tu cuenta. Primero vinculala desde "Pedir turno".`);
+      }
     }
 
     /* Sobreturno: solo el staff, para atender pedidos por teléfono/mostrador

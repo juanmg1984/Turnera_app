@@ -102,6 +102,9 @@ const SCHEMA = [
      id TEXT PRIMARY KEY, cliente_id TEXT NOT NULL,
      turno_codigo TEXT, mensaje TEXT NOT NULL,
      leida INTEGER NOT NULL DEFAULT 0, creada TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS usuario_aeronaves (
+     usuario_id TEXT NOT NULL, matricula TEXT NOT NULL,
+     PRIMARY KEY (usuario_id, matricula))`
 ];
 
 const CONFIG_DEFAULT = {
