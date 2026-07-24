@@ -86,7 +86,7 @@ de SMTP de algunos hostings):
    - `MAIL_FROM` = el email verificado del paso 2
    - `MAIL_FROM_NOMBRE` = `Turnos Aeroplanta San Fernando` (opcional)
    - `APP_URL` = la URL pública de tu servicio (ej. `https://turnera-san-fernando.onrender.com`)
-     — se usa para armar los links de los mails.
+     — se usa para armar los links de los mails. **IMPORTANTE:** En tu entorno de "Test", asegurate de que esta variable apunte a la URL de test (ej. `https://turnera-test.onrender.com`), y en Producción a la de producción. Si no la configuras o copias la de producción, los correos desde el entorno de pruebas enviarán a los usuarios al sistema productivo.
 5. Redeploy. En **Configuración** (vista admin) vas a ver "📧 Envío de mails activo".
 
 Para probarlo localmente podés setear las mismas variables antes de arrancar:
