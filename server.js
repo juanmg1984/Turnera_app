@@ -878,24 +878,21 @@ app.get('/api/turnos/mensual', requiere('coordinador', 'admin'), async (req, res
     const { mes } = req.query; // Formato YYYY-MM
     if (!/^\d{4}-\d{2}$/.test(mes)) return errj(res, 400, 'Mes inválido');
     
-    // Contamos turnos por fecha en el mes
+    // Traemos todos los turnos del mes y agrupamos en JS
     const rows = await db.query(`
-      SELECT fecha, 
-             COUNT(*) as total,
-             SUM(CASE WHEN estado = 'PENDIENTE' THEN 1 ELSE 0 END) as pendientes,
-             SUM(CASE WHEN estado = 'PROGRAMADO' THEN 1 ELSE 0 END) as programados
+      SELECT fecha, estado
       FROM turnos 
       WHERE fecha LIKE ? AND estado IN ('PENDIENTE', 'PROGRAMADO', 'ABASTECIDO', 'AUSENTE', 'CANCELADO')
-      GROUP BY fecha
     `, [`${mes}-%`]);
     
     const resumen = {};
     for (const r of rows) {
-      resumen[r.fecha] = {
-        total: Number(r.total),
-        pendientes: Number(r.pendientes),
-        programados: Number(r.programados)
-      };
+      if (!resumen[r.fecha]) {
+        resumen[r.fecha] = { total: 0, pendientes: 0, programados: 0 };
+      }
+      resumen[r.fecha].total++;
+      if (r.estado === 'PENDIENTE') resumen[r.fecha].pendientes++;
+      if (r.estado === 'PROGRAMADO') resumen[r.fecha].programados++;
     }
     res.json(resumen);
   } catch (e) { next(e); }
