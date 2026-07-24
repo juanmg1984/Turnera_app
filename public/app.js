@@ -2022,12 +2022,10 @@ async function renderCalendarioMensual() {
     const d = data[fecha] || { total: 0, pendientes: 0, programados: 0 };
     
     html += `<div class="calendario-dia ${act ? "activo" : ""}" onclick="FILTRO_FECHA='${fecha}'; irA('agenda');">
-      <div class="cal-num">${dia} ${hoy ? "<span style='color:var(--azul);font-size:10px'>(Hoy)</span>" : ""}</div>`;
-      
-    if (d.pendientes > 0) html += `<div class="cal-indicador cal-pendientes"><span>Pendientes</span><span>${d.pendientes}</span></div>`;
-    if (d.programados > 0) html += `<div class="cal-indicador cal-programados"><span>Programados</span><span>${d.programados}</span></div>`;
-    
-    html += `<div class="cal-total">${d.total} turno(s)</div>
+      <div class="cal-num">${dia} ${hoy ? "<span style='color:var(--azul);font-size:10px'>(Hoy)</span>" : ""}</div>
+      <div class="cal-indicador cal-programados"><span>Asignados</span><span>${d.programados}</span></div>
+      <div class="cal-indicador cal-pendientes"><span>Sin asignar</span><span>${d.pendientes}</span></div>
+      <div class="cal-total">${d.total} turno(s)</div>
     </div>`;
   }
   
