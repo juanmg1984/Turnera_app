@@ -667,6 +667,7 @@ async function pasoDatos() {
         <select onchange="W.hangar=this.value;render()">${hangares}</select>
         <span class="icono-estado"></span>
       </div>
+      ${W.hangar === 'PLAT_YPF' ? `<div class="alerta azul" style="margin-top:8px">?? <strong>Plataforma YPF (Surtidor)</strong>: Deberás llevar la aeronave a la plataforma. El turno se autoasignará y confirmará inmediatamente al finalizar.</div>` : ''}
     </div>
     <div class="fila-form">
       <label>Motivo:<small>Comentario adicional que quiera agregar al turno</small></label>
