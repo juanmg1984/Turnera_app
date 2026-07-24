@@ -93,6 +93,14 @@ function alertaModal(titulo, texto) {
     <div class="botonera"><button class="btn btn-verde" onclick="cerrarModal()">Entendido</button></div>`);
 }
 function errorModal(e) { alertaModal('Atención', e.message || String(e)); }
+function confirmarModal(titulo, texto, accion) {
+  modal(`<h3>${esc(titulo)}</h3><p style="font-size:14.5px;line-height:1.6;white-space:pre-line">${esc(texto)}</p>
+    <div class="botonera">
+      <button class="btn btn-gris" onclick="cerrarModal()">Cancelar</button>
+      <button class="btn btn-verde" id="btn-conf-modal">Confirmar</button>
+    </div>`);
+  $('#btn-conf-modal').onclick = () => { cerrarModal(); accion(); };
+}
 
 /* ============================================================
    ARRANQUE Y SESIÓN
@@ -877,7 +885,6 @@ async function renderAgenda() {
       <button class="btn btn-gris btn-chico" onclick="abrirCancelar('${t.id}','${t.codigo}')">Cancelar</button>
     </div>
   </div>`;
-
   const cardFin = (t) => `<div class="turno-card" style="border-left-color:${ESTADOS[t.estado].color}">
     <div class="encabezado">
       <span class="hora">${t.hora}</span>${badgeGrado(t.grado)}
@@ -891,6 +898,9 @@ async function renderAgenda() {
   $('#main').innerHTML = `
     <h2 class="titulo-seccion">Agenda de planta</h2>
     <p class="subtitulo">Asigná abastecedora y operador a cada pedido, y confirmá el resultado (abastecido / no se presentó). Los turnos programados de días pasados que no se gestionen se asumen <strong>abastecidos</strong> al cierre.</p>
+    
+    <div id="calendario-container"></div>
+
     <div class="panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       <label style="font-weight:700;font-size:14px">Fecha:</label>
       <input type="date" style="max-width:190px" value="${FILTRO_FECHA}" onchange="FILTRO_FECHA=this.value;render()">
@@ -916,6 +926,8 @@ async function renderAgenda() {
         <span style="margin-left:auto;color:var(--texto-suave);font-size:12px">${t.codigo}</span></div>
         <div class="datos">${esc(t.cliente)} · ${esc(t.motivo_cancelacion || '')}</div></div>`).join('')}
     </div>` : ''}`;
+    
+  setTimeout(renderCalendarioMensual, 10);
 }
 
 async function confirmarAbastecimiento(id, codigo, resultado) {
@@ -1274,6 +1286,8 @@ async function renderDashboard() {
   $('#main').innerHTML = `
     <h2 class="titulo-seccion">Dashboard</h2>
     <p class="subtitulo">Estado operativo de la aeroplanta para la fecha seleccionada.</p>
+    
+    <div id="calendario-container"></div>
 
     <div class="panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       <label style="font-weight:700;font-size:14px">Fecha:</label>
