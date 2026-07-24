@@ -878,21 +878,28 @@ app.get('/api/turnos/mensual', requiere('coordinador', 'admin'), async (req, res
     const { mes } = req.query; // Formato YYYY-MM
     if (!/^\d{4}-\d{2}$/.test(mes)) return errj(res, 400, 'Mes inválido');
     
-    // Traemos todos los turnos del mes y agrupamos en JS
+    // Traemos todos los turnos del mes usando >= y <= para evitar problemas de LIKE
+    const inicio = `${mes}-01`;
+    const fin = `${mes}-31`;
     const rows = await db.query(`
       SELECT fecha, estado
       FROM turnos 
-      WHERE fecha LIKE ? AND estado IN ('PENDIENTE', 'PROGRAMADO', 'ABASTECIDO', 'AUSENTE', 'CANCELADO')
-    `, [`${mes}-%`]);
+      WHERE fecha >= ? AND fecha <= ? 
+        AND estado IN ('PENDIENTE', 'PROGRAMADO', 'ABASTECIDO', 'AUSENTE', 'CANCELADO')
+    `, [inicio, fin]);
     
     const resumen = {};
     for (const r of rows) {
-      if (!resumen[r.fecha]) {
-        resumen[r.fecha] = { total: 0, pendientes: 0, programados: 0 };
+      const f = r.fecha || r[0]; // Fallback por si libsql devuelve array
+      const est = r.estado || r[1];
+      if (!f) continue;
+      
+      if (!resumen[f]) {
+        resumen[f] = { total: 0, pendientes: 0, programados: 0 };
       }
-      resumen[r.fecha].total++;
-      if (r.estado === 'PENDIENTE') resumen[r.fecha].pendientes++;
-      if (r.estado === 'PROGRAMADO') resumen[r.fecha].programados++;
+      resumen[f].total++;
+      if (est === 'PENDIENTE') resumen[f].pendientes++;
+      if (est === 'PROGRAMADO') resumen[f].programados++;
     }
     res.json(resumen);
   } catch (e) { next(e); }
