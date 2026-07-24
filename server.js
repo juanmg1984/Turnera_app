@@ -858,6 +858,21 @@ async function barrerAutoAbastecido() {
 }
 
 /* Resumen mensual para calendario (coordinador/admin) */
+app.get('/api/debug-turnos', async (req, res, next) => {
+  try {
+    const rows = await db.query(`
+      SELECT fecha, 
+             COUNT(*) as total,
+             SUM(CASE WHEN estado = 'PENDIENTE' THEN 1 ELSE 0 END) as pendientes,
+             SUM(CASE WHEN estado = 'PROGRAMADO' THEN 1 ELSE 0 END) as programados
+      FROM turnos 
+      WHERE fecha LIKE ? AND estado IN ('PENDIENTE', 'PROGRAMADO', 'ABASTECIDO', 'AUSENTE', 'CANCELADO')
+      GROUP BY fecha
+    `, ['2026-07-%']);
+    res.json(rows);
+  } catch (e) { next(e); }
+});
+
 app.get('/api/turnos/mensual', requiere('coordinador', 'admin'), async (req, res, next) => {
   try {
     const { mes } = req.query; // Formato YYYY-MM
