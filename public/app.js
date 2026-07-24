@@ -1991,7 +1991,9 @@ iniciar();
 let CALENDARIO_MES = hoyISO().substring(0, 7); // YYYY-MM
 async function renderCalendarioMensual() {
   let data = {};
-  try { data = await api(`/api/turnos/mensual?mes=${CALENDARIO_MES}`); } catch(e) { console.error(e); }
+  try { 
+    data = await api(`/api/turnos/mensual?mes=${CALENDARIO_MES}&_=${Date.now()}`); 
+  } catch(e) { console.error(e); }
   
   const [y, m] = CALENDARIO_MES.split("-").map(Number);
   const primerDiaMes = new Date(y, m - 1, 1).getDay();
@@ -2015,18 +2017,25 @@ async function renderCalendarioMensual() {
     html += `<div class="calendario-dia fuera-mes"></div>`;
   }
   
+  const hoyStr = hoyISO();
+  
   for (let dia = 1; dia <= diasMes; dia++) {
     const fecha = `${y}-${String(m).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
-    const hoy = fecha === hoyISO();
+    const hoy = fecha === hoyStr;
+    const pasado = fecha < hoyStr;
     const act = fecha === FILTRO_FECHA;
     const d = data[fecha] || { total: 0, pendientes: 0, programados: 0 };
     
-    html += `<div class="calendario-dia ${act ? "activo" : ""}" onclick="FILTRO_FECHA='${fecha}'; irA('agenda');">
-      <div class="cal-num">${dia} ${hoy ? "<span style='color:var(--azul);font-size:10px'>(Hoy)</span>" : ""}</div>
-      <div class="cal-indicador cal-programados"><span>Asignados</span><span>${d.programados}</span></div>
+    html += `<div class="calendario-dia ${act ? "activo" : ""} ${pasado ? "pasado" : ""}" onclick="FILTRO_FECHA='${fecha}'; irA('agenda');" ${pasado ? 'style="opacity:0.5;background:#f9f9f9;"' : ''}>
+      <div class="cal-num">${dia} ${hoy ? "<span style='color:var(--azul);font-size:10px'>(Hoy)</span>" : ""}</div>`;
+      
+    if (!pasado) {
+      html += `<div class="cal-indicador cal-programados"><span>Asignados</span><span>${d.programados}</span></div>
       <div class="cal-indicador cal-pendientes"><span>Sin asignar</span><span>${d.pendientes}</span></div>
-      <div class="cal-total">${d.total} turno(s)</div>
-    </div>`;
+      <div class="cal-total">${d.total} turno(s)</div>`;
+    }
+    
+    html += `</div>`;
   }
   
   html += `</div></div>`;
