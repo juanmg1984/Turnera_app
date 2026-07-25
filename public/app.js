@@ -186,8 +186,8 @@ function renderLogin() {
           ${hayClientes ? `
           <select id="lg-cliente-select" onchange="alCambiarClienteSelect(this.value)">
             <option value="">-- Seleccionar cliente del padrón (sin mail) --</option>
-            ${clientesDisponibles.map(c => `<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join('')}
             <option value="__NUEVO__">➕ Registrar un cliente nuevo...</option>
+            ${clientesDisponibles.map(c => `<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join('')}
           </select>
           ` : ''}
         </div>
