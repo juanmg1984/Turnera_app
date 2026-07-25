@@ -386,7 +386,7 @@ app.post('/api/abastecedoras', requiere('admin', 'coordinador'), async (req, res
 
 app.put('/api/abastecedoras/:id', requiere('admin', 'coordinador'), async (req, res, next) => {
   try {
-    const oldId = req.params.id;
+    const oldId = String(req.params.id).trim().toUpperCase();
     const ab = (await query(`SELECT * FROM abastecedoras WHERE id = ?`, [oldId]))[0];
     if (!ab) return errj(res, 404, 'Abastecedora inexistente.');
 
@@ -446,7 +446,7 @@ app.put('/api/abastecedoras/:id', requiere('admin', 'coordinador'), async (req, 
 /* Eliminar o desactivar abastecedora si tiene histórico */
 app.delete('/api/abastecedoras/:id', requiere('admin', 'coordinador'), async (req, res, next) => {
   try {
-    const id = req.params.id;
+    const id = String(req.params.id).trim().toUpperCase();
     const ab = (await query(`SELECT * FROM abastecedoras WHERE id = ?`, [id]))[0];
     if (!ab) return errj(res, 404, 'Abastecedora inexistente.');
     const enTurnos = Number((await query(`SELECT COUNT(*) AS n FROM turnos WHERE abastecedora = ?`, [id]))[0].n);

@@ -142,6 +142,7 @@ async function seed(hashPassword) {
     ['AB-01', 'Abastecedora 01', 'JET A-1', 10000],
     ['AB-02', 'Abastecedora 02', 'JET A-1', 5000],
     ['AB-03', 'Abastecedora 03', 'AVGAS 100LL', 3000],
+    ['AB-04', 'Abastecedora 04', 'AVGAS 100LL', 3000],
     ['SURT-JET', 'Surtidor JET A-1', 'JET A-1', 999999],
     ['SURT-AVG', 'Surtidor AVGAS', 'AVGAS 100LL', 999999]
   ]) {
@@ -223,6 +224,28 @@ async function init(hashPassword) {
   await migrar();
   await asegurarColumna('turnos', 'cuenta_corriente', `TEXT DEFAULT ''`);
   await seed(hashPassword);
+
+  // Limpieza inicial forzada única de abastecedoras
+  const limpio = await query(`SELECT valor FROM config WHERE clave = 'maestro_abastecedoras_limpio'`);
+  if (!limpio.length) {
+    console.log("Realizando limpieza inicial del maestro de abastecedoras...");
+    // Borramos todas las existentes
+    await query(`DELETE FROM abastecedoras`);
+    // Insertamos las 6 estándar y limpias
+    for (const [id, nombre, grado, cap] of [
+      ['AB-01', 'Abastecedora 01', 'JET A-1', 10000],
+      ['AB-02', 'Abastecedora 02', 'JET A-1', 5000],
+      ['AB-03', 'Abastecedora 03', 'AVGAS 100LL', 3000],
+      ['AB-04', 'Abastecedora 04', 'AVGAS 100LL', 3000],
+      ['SURT-JET', 'Surtidor JET A-1', 'JET A-1', 999999],
+      ['SURT-AVG', 'Surtidor AVGAS', 'AVGAS 100LL', 999999]
+    ]) {
+      await query(`INSERT INTO abastecedoras (id, nombre, grado, capacidad) VALUES (?, ?, ?, ?)`,
+        [id, nombre, grado, cap]);
+    }
+    await query(`INSERT INTO config (clave, valor) VALUES ('maestro_abastecedoras_limpio', '1')`);
+    console.log("Limpieza del maestro de abastecedoras completada.");
+  }
 }
 
 async function getConfig() {
