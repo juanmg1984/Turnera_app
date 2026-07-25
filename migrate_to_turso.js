@@ -46,6 +46,16 @@ async function migrate() {
   for (const ddl of DDL) {
     await turso.execute(ddl);
   }
+  
+  // Asegurar que padron_anac exista en Turso antes de intentar vaciarla o llenarla
+  await turso.execute(`
+    CREATE TABLE IF NOT EXISTS padron_anac (
+      matricula TEXT PRIMARY KEY,
+      modelo TEXT NOT NULL,
+      operador TEXT DEFAULT '',
+      ultima_operacion TEXT
+    )
+  `);
 
   // To avoid duplicate constraints on multiple runs, we can clear the remote tables first
   console.log("Clearing existing data on Turso...");
