@@ -386,16 +386,76 @@ app.post('/api/abastecedoras', requiere('admin', 'coordinador'), async (req, res
 
 app.put('/api/abastecedoras/:id', requiere('admin', 'coordinador'), async (req, res, next) => {
   try {
-    const { capacidad, activa, nombre } = req.body || {};
-    const ab = (await query(`SELECT * FROM abastecedoras WHERE id = ?`, [req.params.id]))[0];
+    const oldId = req.params.id;
+    const ab = (await query(`SELECT * FROM abastecedoras WHERE id = ?`, [oldId]))[0];
     if (!ab) return errj(res, 404, 'Abastecedora inexistente.');
+
+    const { id: newIdRaw, capacidad, activa, nombre, grado } = req.body || {};
+    let currentId = oldId;
+
+    if (newIdRaw !== undefined) {
+      const newId = String(newIdRaw).trim().toUpperCase();
+      if (!newId) return errj(res, 400, 'ID inválido.');
+      if (newId !== oldId) {
+        const dup = await query(`SELECT id FROM abastecedoras WHERE id = ?`, [newId]);
+        if (dup.length) return errj(res, 409, `Ya existe la abastecedora ${newId}.`);
+        await query(`UPDATE abastecedoras SET id = ? WHERE id = ?`, [newId, oldId]);
+        await query(`UPDATE turnos SET abastecedora = ? WHERE abastecedora = ?`, [newId, oldId]);
+        currentId = newId;
+      }
+    }
+
+    if (nombre !== undefined) {
+      await query(`UPDATE abastecedoras SET nombre = ? WHERE id = ?`, [String(nombre).trim(), currentId]);
+    }
     if (capacidad !== undefined) {
       if (!(Number(capacidad) > 0)) return errj(res, 400, 'Capacidad inválida.');
-      await query(`UPDATE abastecedoras SET capacidad = ? WHERE id = ?`, [Number(capacidad), req.params.id]);
+      await query(`UPDATE abastecedoras SET capacidad = ? WHERE id = ?`, [Number(capacidad), currentId]);
     }
-    if (nombre !== undefined) await query(`UPDATE abastecedoras SET nombre = ? WHERE id = ?`, [String(nombre).trim(), req.params.id]);
-    if (activa !== undefined) await query(`UPDATE abastecedoras SET activa = ? WHERE id = ?`, [activa ? 1 : 0, req.params.id]);
-    res.json({ ok: true });
+    if (activa !== undefined) {
+      await query(`UPDATE abastecedoras SET activa = ? WHERE id = ?`, [activa ? 1 : 0, currentId]);
+    }
+
+    let canceladosCount = 0;
+    if (grado !== undefined) {
+      if (req.usuario.rol !== 'admin') {
+        return errj(res, 403, 'Solo el administrador puede cambiar el grado de una abastecedora.');
+      }
+      if (!GRADOS.includes(grado)) {
+        return errj(res, 400, 'Grado de combustible inválido.');
+      }
+      if (grado !== ab.grado) {
+        await query(`UPDATE abastecedoras SET grado = ? WHERE id = ?`, [grado, currentId]);
+        const activos = await query(
+          `SELECT * FROM turnos WHERE abastecedora = ? AND estado IN ('PENDIENTE','PROGRAMADO')`, [currentId]);
+        for (const t of activos) {
+          await query(
+            `UPDATE turnos SET estado = 'CANCELADO', motivo_cancelacion = ? WHERE id = ?`,
+            [`Cancelado automáticamente por cambio de grado de la abastecedora asignada ${currentId} a ${grado}. Volvé a solicitar el turno.`, t.id]);
+          await notificar(t.cliente_id, t.codigo,
+            `❌ Tu turno ${t.codigo} del ${t.fecha} ${t.hora} hs fue cancelado por cambio de grado de la abastecedora asignada.`);
+        }
+        canceladosCount = activos.length;
+      }
+    }
+
+    res.json({ ok: true, id: currentId, cancelados: canceladosCount });
+  } catch (e) { next(e); }
+});
+
+/* Eliminar o desactivar abastecedora si tiene histórico */
+app.delete('/api/abastecedoras/:id', requiere('admin', 'coordinador'), async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const ab = (await query(`SELECT * FROM abastecedoras WHERE id = ?`, [id]))[0];
+    if (!ab) return errj(res, 404, 'Abastecedora inexistente.');
+    const enTurnos = Number((await query(`SELECT COUNT(*) AS n FROM turnos WHERE abastecedora = ?`, [id]))[0].n);
+    if (enTurnos > 0) {
+      await query(`UPDATE abastecedoras SET activa = 0 WHERE id = ?`, [id]);
+      return res.json({ ok: true, deleted: false, message: 'La abastecedora tiene turnos en el histórico, por lo que fue desactivada.' });
+    }
+    await query(`DELETE FROM abastecedoras WHERE id = ?`, [id]);
+    res.json({ ok: true, deleted: true, message: 'La abastecedora fue eliminada correctamente.' });
   } catch (e) { next(e); }
 });
 
@@ -717,7 +777,7 @@ app.put('/api/aeronaves/:matricula', requiere('admin', 'coordinador'), async (re
     const m = normMat(req.params.matricula);
     const a = (await query(`SELECT * FROM aeronaves WHERE matricula = ?`, [m]))[0];
     if (!a) return errj(res, 404, 'Matrícula inexistente.');
-    const { tipo, cliente_id, hangar, capacidad, activa } = req.body || {};
+    const { tipo, cliente_id, hangar, capacidad, activa, motor } = req.body || {};
     if (req.body?.grado !== undefined) return errj(res, 400, 'El grado se cambia únicamente desde "Cambiar grado", con confirmación escrita.');
     if (tipo !== undefined) await query(`UPDATE aeronaves SET tipo = ? WHERE matricula = ?`, [String(tipo).trim(), m]);
     if (cliente_id !== undefined) {
@@ -731,7 +791,28 @@ app.put('/api/aeronaves/:matricula', requiere('admin', 'coordinador'), async (re
       await query(`UPDATE aeronaves SET capacidad = ? WHERE matricula = ?`, [Number(capacidad), m]);
     }
     if (activa !== undefined) await query(`UPDATE aeronaves SET activa = ? WHERE matricula = ?`, [activa ? 1 : 0, m]);
+    if (motor !== undefined) {
+      if (!['TURBINA', 'PISTON'].includes(motor)) return errj(res, 400, 'Tipo de motor inválido.');
+      const excepcion = a.grado !== MOTOR_GRADO[motor] ? 1 : 0;
+      await query(`UPDATE aeronaves SET motor = ?, excepcion_grado = ? WHERE matricula = ?`, [motor, excepcion, m]);
+    }
     res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/* Eliminar o desactivar matrícula si tiene histórico */
+app.delete('/api/aeronaves/:matricula', requiere('admin', 'coordinador'), async (req, res, next) => {
+  try {
+    const m = normMat(req.params.matricula);
+    const a = (await query(`SELECT * FROM aeronaves WHERE matricula = ?`, [m]))[0];
+    if (!a) return errj(res, 404, 'Matrícula inexistente.');
+    const enTurnos = Number((await query(`SELECT COUNT(*) AS n FROM turnos WHERE matricula = ?`, [m]))[0].n);
+    if (enTurnos > 0) {
+      await query(`UPDATE aeronaves SET activa = 0 WHERE matricula = ?`, [m]);
+      return res.json({ ok: true, deleted: false, message: 'La aeronave tiene turnos en el histórico, por lo que fue desactivada.' });
+    }
+    await query(`DELETE FROM aeronaves WHERE matricula = ?`, [m]);
+    res.json({ ok: true, deleted: true, message: 'La aeronave fue eliminada correctamente.' });
   } catch (e) { next(e); }
 });
 

@@ -1570,6 +1570,7 @@ async function tabAeronaves() {
       <td style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-gris btn-chico" onclick='abrirEditarAeronave(${JSON.stringify(a).replace(/'/g, "&#39;")})'>Editar</button>
         ${USER.rol === 'admin' ? `<button class="btn btn-blanco btn-chico" onclick="abrirCambioGrado('${esc(a.matricula)}','${a.grado}','${a.motor}')">Cambiar grado</button>` : ''}
+        <button class="btn btn-blanco btn-chico" onclick="borrarAeronave('${esc(a.matricula)}')">Eliminar</button>
       </td>
     </tr>`).join('');
   return `
@@ -1586,6 +1587,10 @@ function abrirEditarAeronave(a) {
   modal(`<h3>Editar ${esc(a.matricula)}</h3>
     <div class="alerta azul">El grado (${esc(a.grado)}) no se edita acá: usá "Cambiar grado", que exige confirmación escrita.</div>
     <div class="fila-form"><label>Tipo:</label><div class="campo"><input type="text" id="ea-tipo" value="${esc(a.tipo)}"></div></div>
+    <div class="fila-form"><label>Motor:</label><div class="campo"><select id="ea-motor">
+      <option value="PISTON" ${a.motor === 'PISTON' ? 'selected' : ''}>Pistón</option>
+      <option value="TURBINA" ${a.motor === 'TURBINA' ? 'selected' : ''}>Turbina</option>
+    </select></div></div>
     <div class="fila-form"><label>Cliente:</label><div class="campo"><select id="ea-cliente">${optCli}</select></div></div>
     <div class="fila-form"><label>Hangar:</label><div class="campo"><select id="ea-hangar">${optHan}</select></div></div>
     <div class="fila-form"><label>Capacidad (L):</label><div class="campo"><input type="number" id="ea-capacidad" value="${a.capacidad}"></div></div>
@@ -1600,11 +1605,20 @@ function abrirEditarAeronave(a) {
 async function guardarEdicionAeronave(matricula) {
   try {
     await api(`/api/aeronaves/${encodeURIComponent(matricula)}`, 'PUT', {
-      tipo: $('#ea-tipo').value, cliente_id: $('#ea-cliente').value,
+      tipo: $('#ea-tipo').value, motor: $('#ea-motor').value, cliente_id: $('#ea-cliente').value,
       hangar: $('#ea-hangar').value, capacidad: $('#ea-capacidad').value,
       activa: $('#ea-activa').value === '1',
     });
     cerrarModal(); render();
+  } catch (e) { errorModal(e); }
+}
+
+async function borrarAeronave(matricula) {
+  if (!confirm(`¿Estás seguro de que querés eliminar la aeronave ${matricula}? Si tiene turnos registrados, se desactivará en su lugar.`)) return;
+  try {
+    const r = await api(`/api/aeronaves/${encodeURIComponent(matricula)}`, 'DELETE');
+    alertaModal(r.deleted ? 'Aeronave eliminada' : 'Aeronave desactivada', r.message || 'Operación completada.');
+    render();
   } catch (e) { errorModal(e); }
 }
 
@@ -1697,15 +1711,18 @@ async function tabAbastecedoras() {
   const abs = await api('/api/abastecedoras');
   const filas = abs.map(ab => `
     <tr>
-      <td><strong>${ab.id}</strong></td><td>${esc(ab.nombre)}</td><td>${badgeGrado(ab.grado)}</td>
-      <td><input type="number" id="cap-${ab.id}" value="${ab.capacidad}" style="max-width:110px"
-           onchange="cambiarCapacidad('${ab.id}',this.value)"> L</td>
+      <td><strong>${ab.id}</strong></td>
+      <td>${esc(ab.nombre)}</td>
+      <td>${badgeGrado(ab.grado)}</td>
+      <td>${ab.capacidad} L</td>
       <td>${ab.activa ? '✅ Activa' : '⛔ Fuera de servicio'}</td>
-      <td><button class="btn btn-gris btn-chico" onclick="toggleAbastecedora('${ab.id}',${ab.activa ? 0 : 1})">
-        ${ab.activa ? 'Fuera de servicio' : 'Reactivar'}</button></td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-gris btn-chico" onclick='abrirEditarAbastecedora(${JSON.stringify(ab).replace(/'/g, "&#39;")})'>Editar</button>
+        <button class="btn btn-blanco btn-chico" onclick="borrarAbastecedora('${esc(ab.id)}')">Eliminar</button>
+      </td>
     </tr>`).join('');
   return `<h3 style="margin-bottom:12px">Abastecedoras (${abs.length})</h3>
-    <div class="alerta azul">Cada abastecedora está <strong>dedicada a un único grado</strong> (práctica estándar anti-misfuelling). La capacidad se edita directo en la tabla.</div>
+    <div class="alerta azul">Cada abastecedora está <strong>dedicada a un único grado</strong> (práctica estándar anti-misfuelling).</div>
     <div class="tabla-scroll"><table>
       <thead><tr><th>ID</th><th>Nombre</th><th>Grado</th><th>Capacidad</th><th>Estado</th><th></th></tr></thead>
       <tbody>${filas}</tbody></table></div>
@@ -1718,12 +1735,60 @@ async function tabAbastecedoras() {
     </div>`;
 }
 
-async function cambiarCapacidad(id, capacidad) {
-  try { await api(`/api/abastecedoras/${id}`, 'PUT', { capacidad }); } catch (e) { errorModal(e); render(); }
+function abrirEditarAbastecedora(ab) {
+  const optGrados = GRADOS.map(g => `<option value="${g}" ${g === ab.grado ? 'selected' : ''}>${g}</option>`).join('');
+  modal(`<h3>Editar Abastecedora ${esc(ab.id)}</h3>
+    ${ab.activa ? '' : '<div class="alerta azul">Esta abastecedora está fuera de servicio.</div>'}
+    ${USER.rol === 'admin' ? '' : '<div class="alerta azul">Solo el administrador puede cambiar el grado de combustible.</div>'}
+    <div class="fila-form"><label>ID / Prefijo:</label><div class="campo"><input type="text" id="eab-id" value="${esc(ab.id)}"></div></div>
+    <div class="fila-form"><label>Nombre:</label><div class="campo"><input type="text" id="eab-nombre" value="${esc(ab.nombre)}"></div></div>
+    <div class="fila-form"><label>Capacidad (L):</label><div class="campo"><input type="number" id="eab-capacidad" value="${ab.capacidad}"></div></div>
+    <div class="fila-form"><label>Grado:</label><div class="campo">
+      <select id="eab-grado" ${USER.rol === 'admin' ? '' : 'disabled'}>${optGrados}</select>
+    </div></div>
+    <div class="fila-form"><label>Estado:</label><div class="campo"><select id="eab-activa">
+      <option value="1" ${ab.activa ? 'selected' : ''}>Activa</option>
+      <option value="0" ${ab.activa ? '' : 'selected'}>Fuera de servicio</option>
+    </select></div></div>
+    <div class="botonera">
+      <button class="btn btn-verde" onclick="guardarEdicionAbastecedora('${esc(ab.id)}', '${esc(ab.grado)}')">Guardar</button>
+      <button class="btn btn-gris" onclick="cerrarModal()">Cancelar</button>
+    </div>`);
 }
-async function toggleAbastecedora(id, activa) {
-  try { await api(`/api/abastecedoras/${id}`, 'PUT', { activa: !!activa }); render(); } catch (e) { errorModal(e); }
+
+async function guardarEdicionAbastecedora(idOriginal, gradoOriginal) {
+  const nuevoId = $('#eab-id').value;
+  const nuevoGrado = $('#eab-grado').value;
+  if (nuevoGrado !== gradoOriginal && USER.rol === 'admin') {
+    if (!confirm(`🚨 CAMBIO DE GRADO CRÍTICO\n\n¿Estás seguro de cambiar el grado de combustible de la abastecedora a ${nuevoGrado}?\n\nLos turnos activos asignados a esta abastecedora serán CANCELADOS automáticamente.`)) {
+      return;
+    }
+  }
+  try {
+    const r = await api(`/api/abastecedoras/${encodeURIComponent(idOriginal)}`, 'PUT', {
+      id: nuevoId,
+      nombre: $('#eab-nombre').value,
+      capacidad: $('#eab-capacidad').value,
+      activa: $('#eab-activa').value === '1',
+      grado: nuevoGrado,
+    });
+    cerrarModal();
+    if (r.cancelados > 0) {
+      alertaModal('Grado modificado', `Se actualizó el grado de la abastecedora. Se cancelaron ${r.cancelados} turno(s) activo(s) asignado(s) a este equipo.`);
+    }
+    render();
+  } catch (e) { errorModal(e); }
 }
+
+async function borrarAbastecedora(id) {
+  if (!confirm(`¿Estás seguro de que querés eliminar la abastecedora ${id}? Si tiene turnos registrados, se desactivará (fuera de servicio) en su lugar.`)) return;
+  try {
+    const r = await api(`/api/abastecedoras/${encodeURIComponent(id)}`, 'DELETE');
+    alertaModal(r.deleted ? 'Abastecedora eliminada' : 'Abastecedora desactivada', r.message || 'Operación completada.');
+    render();
+  } catch (e) { errorModal(e); }
+}
+
 async function altaAbastecedora() {
   try {
     await api('/api/abastecedoras', 'POST', {
