@@ -4,7 +4,10 @@
   "description": "Gestión de turnos de abastecimiento — Aeroplanta San Fernando",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "import-pad": "python import_pad.py",
+    "enrich-aeronaves": "node enrich_aeronaves.js",
+    "import-anac": "node import_anac_csv.js"
   },
   "engines": {
     "node": ">=22"

@@ -141,11 +141,39 @@ async function logout() {
    ============================================================ */
 
 let MODO_LOGIN = 'login';
+let CLIENTES_DISPONIBLES = null;
+
+async function cargarClientesDisponibles() {
+  try {
+    CLIENTES_DISPONIBLES = await api('/api/auth/clientes-disponibles');
+  } catch { CLIENTES_DISPONIBLES = []; }
+}
+
+async function setModoRegistro() {
+  MODO_LOGIN = 'registro';
+  await cargarClientesDisponibles();
+  render();
+}
+
+function alCambiarClienteSelect(val) {
+  const inputWrap = $('#lg-cliente-nuevo-wrap');
+  if (inputWrap) {
+    inputWrap.style.display = (val === '__NUEVO__' || !CLIENTES_DISPONIBLES?.length) ? 'block' : 'none';
+  }
+}
 
 function renderLogin() {
   $('#header').classList.add('oculto');
   $('#footer').classList.add('oculto');
   const esLogin = MODO_LOGIN === 'login';
+
+  if (!esLogin && CLIENTES_DISPONIBLES === null) {
+    cargarClientesDisponibles().then(() => render());
+  }
+
+  const clientesDisponibles = CLIENTES_DISPONIBLES || [];
+  const hayClientes = clientesDisponibles.length > 0;
+
   $('#main').innerHTML = `
     <div class="login-wrap">
       <div class="panel">
@@ -154,8 +182,18 @@ function renderLogin() {
         <p class="subtitulo">${esLogin ? 'Ingresá con tu email y contraseña' : 'Creá la cuenta de tu empresa (un usuario por cliente)'}</p>
         ${esLogin ? '' : `
         <div class="fila-login">
-          <label>Cliente (empresa / operador):</label>
-          <input type="text" id="lg-cliente" placeholder="Ej.: Fly Andes S.A.">
+          <label>Cliente / Empresa:</label>
+          ${hayClientes ? `
+          <select id="lg-cliente-select" onchange="alCambiarClienteSelect(this.value)">
+            <option value="">-- Seleccionar cliente del padrón (sin mail) --</option>
+            ${clientesDisponibles.map(c => `<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join('')}
+            <option value="__NUEVO__">➕ Registrar un cliente nuevo...</option>
+          </select>
+          ` : ''}
+        </div>
+        <div class="fila-login" id="lg-cliente-nuevo-wrap" style="${hayClientes ? 'display:none' : ''}">
+          <label>${hayClientes ? 'Nombre del cliente nuevo:' : 'Cliente (empresa / operador):'}</label>
+          <input type="text" id="lg-cliente-nuevo" placeholder="Ej.: Fly Andes S.A.">
         </div>
         <div class="fila-login">
           <label>Tu nombre:</label>
@@ -175,10 +213,10 @@ function renderLogin() {
         </div>
         <div class="login-alt">
           ${esLogin
-            ? '¿Primera vez? <a onclick="MODO_LOGIN=\'registro\';render()">Registrá tu empresa como cliente</a><br><a onclick="abrirOlvide()" style="font-weight:400">¿Olvidaste tu contraseña?</a>'
+            ? '¿Primera vez? <a onclick="setModoRegistro()">Registrá tu empresa como cliente</a><br><a onclick="abrirOlvide()" style="font-weight:400">¿Olvidaste tu contraseña?</a>'
             : '¿Ya tenés cuenta? <a onclick="MODO_LOGIN=\'login\';render()">Iniciar sesión</a>'}
         </div>
-        ${esLogin ? '' : `<div class="alerta azul" style="margin-top:16px">El registro autogestionado crea <strong>un usuario por cliente</strong>. Si tu empresa ya tiene cuenta y necesitás otro usuario, lo agrega el coordinador de planta.</div>`}
+        ${esLogin ? '' : `<div class="alerta azul" style="margin-top:16px">El registro autogestionado crea <strong>un usuario por cliente</strong>. Podés elegir tu empresa del padrón o registrar una nueva. Si tu empresa ya tiene cuenta activa con mail, el coordinador puede agregar usuarios adicionales.</div>`}
       </div>
     </div>`;
 }
@@ -267,9 +305,23 @@ async function enviarLogin() {
   const email = $('#lg-email').value.trim();
   const pass = $('#lg-pass').value;
   if (MODO_LOGIN === 'login') return login(email, pass);
+
+  const selectElem = $('#lg-cliente-select');
+  const clienteId = (selectElem && selectElem.value && selectElem.value !== '__NUEVO__') ? selectElem.value : null;
+  const clienteNuevoInput = $('#lg-cliente-nuevo');
+  const clienteNombre = clienteNuevoInput ? clienteNuevoInput.value : '';
+
+  if (!clienteId && !clienteNombre.trim()) {
+    return alertaModal('Cliente requerido', 'Seleccioná un cliente del padrón o ingresá el nombre de tu empresa.');
+  }
+
   try {
     await api('/api/auth/registro', 'POST', {
-      cliente: $('#lg-cliente').value, nombre: $('#lg-nombre').value, email, password: pass,
+      cliente_id: clienteId,
+      cliente: clienteNombre,
+      nombre: $('#lg-nombre').value,
+      email,
+      password: pass,
     });
     await iniciar();
   } catch (e) { errorModal(e); }

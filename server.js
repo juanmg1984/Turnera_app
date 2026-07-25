@@ -145,13 +145,27 @@ async function turnoPorId(id) {
    AUTH
    ============================================================ */
 
-/* Registro autogestionado: crea el cliente + su ÚNICO usuario autogestionado.
-   Usuarios adicionales del mismo cliente: solo los agrega el coordinador. */
+/* Clientes del padrón sin usuario/mail asignado para registro autogestionado */
+app.get('/api/auth/clientes-disponibles', async (req, res, next) => {
+  try {
+    const clientes = await query(
+      `SELECT c.id, c.nombre, COUNT(u.id) AS usuarios_count
+         FROM clientes c
+         LEFT JOIN usuarios u ON u.cliente_id = c.id
+        WHERE c.activo = 1
+        GROUP BY c.id, c.nombre
+       HAVING usuarios_count = 0
+        ORDER BY c.nombre`
+    );
+    res.json(clientes.map(c => ({ id: c.id, nombre: c.nombre })));
+  } catch (e) { next(e); }
+});
+
+/* Registro autogestionado: permite elegir un cliente del padrón sin usuario o crear uno nuevo */
 app.post('/api/auth/registro', async (req, res, next) => {
   try {
-    const { cliente, nombre, email, password } = req.body || {};
+    const { cliente_id, cliente, nombre, email, password } = req.body || {};
     const mail = String(email || '').trim().toLowerCase();
-    if (!cliente || !String(cliente).trim()) return errj(res, 400, 'Ingresá el nombre del cliente (empresa u operador).');
     if (!nombre || !String(nombre).trim()) return errj(res, 400, 'Ingresá tu nombre.');
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return errj(res, 400, 'Ingresá un email válido.');
     if (!password || String(password).length < 8) return errj(res, 400, 'La contraseña debe tener al menos 8 caracteres.');
@@ -159,21 +173,40 @@ app.post('/api/auth/registro', async (req, res, next) => {
     const dupMail = await query(`SELECT id FROM usuarios WHERE email = ?`, [mail]);
     if (dupMail.length) return errj(res, 409, 'Ya existe un usuario con ese email. Si es tuyo, iniciá sesión.');
 
-    const nombreCli = String(cliente).trim();
-    const dupCli = await query(`SELECT id FROM clientes WHERE lower(nombre) = lower(?)`, [nombreCli]);
-    if (dupCli.length) {
-      return errj(res, 409,
-        'Ese cliente ya existe en el sistema. Por seguridad, el registro autogestionado permite un solo usuario por cliente: pedile al coordinador de planta que agregue tu usuario a la cuenta existente.');
+    let finalClienteId = null;
+    let nombreCli = null;
+
+    if (cliente_id) {
+      const cliExistente = (await query(
+        `SELECT c.id, c.nombre, COUNT(u.id) as ucount
+           FROM clientes c
+           LEFT JOIN usuarios u ON u.cliente_id = c.id
+          WHERE c.id = ? GROUP BY c.id`, [cliente_id]))[0];
+      if (!cliExistente) return errj(res, 400, 'El cliente seleccionado no existe.');
+      if (Number(cliExistente.ucount) > 0) {
+        return errj(res, 409, 'Ese cliente ya tiene un usuario asignado. Pedile al coordinador que agregue tu usuario.');
+      }
+      finalClienteId = cliExistente.id;
+      nombreCli = cliExistente.nombre;
+      await query(`UPDATE clientes SET autogestionado = 1 WHERE id = ?`, [finalClienteId]);
+    } else {
+      if (!cliente || !String(cliente).trim()) return errj(res, 400, 'Ingresá el nombre del cliente (empresa u operador).');
+      nombreCli = String(cliente).trim();
+      const dupCli = await query(`SELECT id FROM clientes WHERE lower(nombre) = lower(?)`, [nombreCli]);
+      if (dupCli.length) {
+        return errj(res, 409, 'Ese cliente ya existe en el sistema. Seleccionalo de la lista de clientes del padrón o pedile al coordinador que agregue tu usuario.');
+      }
+      const ahoraCli = new Date().toISOString();
+      finalClienteId = uuid();
+      await query(`INSERT INTO clientes (id, nombre, autogestionado, creado) VALUES (?, ?, 1, ?)`,
+        [finalClienteId, nombreCli, ahoraCli]);
     }
 
     const ahora = new Date().toISOString();
-    const clienteId = uuid();
     const usuarioId = uuid();
-    await query(`INSERT INTO clientes (id, nombre, autogestionado, creado) VALUES (?, ?, 1, ?)`,
-      [clienteId, nombreCli, ahora]);
     await query(
       `INSERT INTO usuarios (id, cliente_id, nombre, email, hash, rol, creado) VALUES (?, ?, ?, ?, ?, 'cliente', ?)`,
-      [usuarioId, clienteId, String(nombre).trim(), mail, hashPassword(password), ahora]);
+      [usuarioId, finalClienteId, String(nombre).trim(), mail, hashPassword(password), ahora]);
 
     const token = await crearSesion(usuarioId);
     setCookieSesion(res, token);
@@ -671,10 +704,9 @@ app.get('/api/aeronaves', requiere(), async (req, res, next) => {
 
 /* ------------------------------------------------------------
    Verificación asistida contra el registro público adsbdb.com
-   (aeronaves con transpondedor Mode-S vistas por redes ADS-B).
+   (https://www.adsbdb.com - aeronaves vistas por redes ADS-B).
    Es una barrera ASISTIVA: un "no encontrada" no bloquea el alta
-   (mucha aviación general no figura), pero un hallazgo permite
-   precargar datos y cruzar tipo real vs. motor/grado declarado.
+   pero un hallazgo permite precargar datos y validar motor/grado.
    ------------------------------------------------------------ */
 
 const cacheVerificacion = new Map(); // canonica -> { ts, data }
@@ -684,25 +716,45 @@ async function consultarRegistroExterno(canonica) {
   const hit = cacheVerificacion.get(canonica);
   if (hit && Date.now() - hit.ts < TTL_VERIFICACION) return hit.data;
   let data = null; // null = servicio no disponible
+
+  /* 1. Consulta al Padrón Oficial ANAC local */
   try {
-    const r = await fetch(`https://api.adsbdb.com/v0/aircraft/${encodeURIComponent(canonica)}`,
-      { signal: AbortSignal.timeout(4000) });
-    if (r.ok) {
-      const j = await r.json();
-      const a = j?.response?.aircraft;
-      if (a) {
-        data = {
-          encontrada: true,
-          tipo: a.type || null, fabricante: a.manufacturer || null,
-          icao_type: a.icao_type || null,
-          operador: a.registered_owner || null, pais: a.registered_owner_country_name || null,
-          sugerencia_motor: sugerirMotor(a),
-        };
-      }
-    } else if (r.status === 404) {
-      data = { encontrada: false };
+    const anac = (await query(`SELECT modelo, operador FROM padron_anac WHERE matricula = ?`, [canonica]))[0];
+    if (anac && anac.modelo) {
+      data = {
+        encontrada: true,
+        fuente: 'Padrón Oficial ANAC Argentina',
+        tipo: anac.modelo,
+        fabricante: null,
+        operador: anac.operador || null,
+        sugerencia_motor: sugerirMotor({ type: anac.modelo }),
+      };
     }
-  } catch { /* timeout o red caída: data queda null */ }
+  } catch {}
+
+  /* 2. Si no está en padrón local, consultar ADSDB */
+  if (!data) {
+    try {
+      const r = await fetch(`https://api.adsbdb.com/v0/aircraft/${encodeURIComponent(canonica)}`,
+        { signal: AbortSignal.timeout(4000) });
+      if (r.ok) {
+        const j = await r.json();
+        const a = j?.response?.aircraft;
+        if (a) {
+          data = {
+            encontrada: true,
+            fuente: 'ADS-B DB (adsbdb.com)',
+            tipo: a.type || null, fabricante: a.manufacturer || null,
+            icao_type: a.icao_type || null,
+            operador: a.registered_owner || null, pais: a.registered_owner_country_name || null,
+            sugerencia_motor: sugerirMotor(a),
+          };
+        }
+      } else if (r.status === 404) {
+        data = { encontrada: false };
+      }
+    } catch { /* timeout o red caída: data queda null */ }
+  }
   if (data) cacheVerificacion.set(canonica, { ts: Date.now(), data });
   return data;
 }
