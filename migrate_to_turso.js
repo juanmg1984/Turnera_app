@@ -27,35 +27,20 @@ const localDb = new DatabaseSync('turnera.db');
 const turso = createClient({ url: tursoUrl, authToken: tursoToken });
 
 // Require DDL from db.js (without running initDB)
-// Actually we can just require db.js, it will connect to local DB but we only want DDL array.
-// But db.js doesn't export DDL.
-// We can get all tables from the local db!
-const tablasObj = localDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
-const tablas = tablasObj.map(t => t.name).filter(t => t !== 'sqlite_sequence');
-
-const fsDB = fs.readFileSync(path.join(__dirname, 'db.js'), 'utf8');
-const ddlMatch = fsDB.match(/const DDL = \[([\s\S]*?)\];/);
-let DDL = [];
-if (ddlMatch) {
-  // eval the array content
-  DDL = eval('[' + ddlMatch[1] + ']');
-}
+// We can get all tables and their create statements from the local db!
+const tablasObj = localDb.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+const tablas = tablasObj.map(t => t.name);
 
 async function migrate() {
-  console.log("Creating tables on Turso...");
-  for (const ddl of DDL) {
-    await turso.execute(ddl);
+  console.log("Creating tables on Turso from local schema...");
+  for (const t of tablasObj) {
+    if (t.sql) {
+      // Execute the exact same CREATE TABLE statement on Turso
+      // but add IF NOT EXISTS just in case
+      let sql = t.sql.replace(/CREATE TABLE/i, "CREATE TABLE IF NOT EXISTS");
+      await turso.execute(sql);
+    }
   }
-  
-  // Asegurar que padron_anac exista en Turso antes de intentar vaciarla o llenarla
-  await turso.execute(`
-    CREATE TABLE IF NOT EXISTS padron_anac (
-      matricula TEXT PRIMARY KEY,
-      modelo TEXT NOT NULL,
-      operador TEXT DEFAULT '',
-      ultima_operacion TEXT
-    )
-  `);
 
   // To avoid duplicate constraints on multiple runs, we can clear the remote tables first
   console.log("Clearing existing data on Turso...");
