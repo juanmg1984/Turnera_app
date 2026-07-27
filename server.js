@@ -7,7 +7,7 @@
 
 const express = require('express');
 const path = require('node:path');
-const { query, uuid, init, getConfig } = require('./db');
+const { query, uuid, init, getConfig, getDbInfo } = require('./db');
 const {
   hashPassword, verificarPassword, crearSesion, borrarSesion,
   setCookieSesion, limpiarCookieSesion, cargarUsuario, requiere,
@@ -29,6 +29,16 @@ app.use(cargarUsuario);
 
 const PUERTO = process.env.PORT || 8642;
 const APP_URL = process.env.APP_URL || `http://localhost:${PUERTO}`;
+
+/* Endpoint de diagnóstico público */
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    db: getDbInfo(),
+    mail_configurado: mailConfigurado(),
+    app_url: APP_URL,
+  });
+});
 
 /* ---------------- Constantes de dominio ---------------- */
 

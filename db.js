@@ -9,17 +9,22 @@ const path = require('node:path');
 
 let query; // (sql, args?) => Promise<rows[]>
 
-if (process.env.TURSO_DATABASE_URL) {
+const tursoUrl = (process.env.TURSO_DATABASE_URL || process.env.TURSO_DATABASE_UR || '').trim();
+const tursoToken = (process.env.TURSO_AUTH_TOKEN || '').trim();
+
+if (tursoUrl && tursoToken) {
+  console.log(`[BD] Conectando a Turso: ${tursoUrl}`);
   const { createClient } = require('@libsql/client/http');
   const client = createClient({
-    url: process.env.TURSO_DATABASE_URL,
-    authToken: process.env.TURSO_AUTH_TOKEN,
+    url: tursoUrl,
+    authToken: tursoToken,
   });
   query = async (sql, args = []) => {
     const r = await client.execute({ sql, args });
     return r.rows;
   };
 } else {
+  console.log(`[BD] Usando SQLite local (turnera.db) — TURSO_DATABASE_URL no configurada`);
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(path.join(__dirname, 'turnera.db'));
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -255,4 +260,11 @@ async function getConfig() {
   return c;
 }
 
-module.exports = { query, uuid, init, getConfig };
+function getDbInfo() {
+  return {
+    backend: tursoUrl && tursoToken ? 'Turso (Nube)' : 'SQLite (Local)',
+    target: tursoUrl ? tursoUrl.split('@').pop() : 'turnera.db',
+  };
+}
+
+module.exports = { query, uuid, init, getConfig, getDbInfo };
