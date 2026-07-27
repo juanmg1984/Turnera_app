@@ -7,7 +7,9 @@
     "start": "node server.js",
     "import-pad": "python import_pad.py",
     "enrich-aeronaves": "node enrich_aeronaves.js",
-    "import-anac": "node import_anac_csv.js"
+    "import-anac": "node import_anac_csv.js",
+    "migrate-prod": "node migrate_to_prod.js",
+    "migrate-prod-dry": "node migrate_to_prod.js --dry-run"
   },
   "engines": {
     "node": ">=22"
